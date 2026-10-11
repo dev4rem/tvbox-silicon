@@ -71,7 +71,7 @@ final class PluginProcess: @unchecked Sendable {
 
     private func start(host: URL) throws -> Instance {
         let root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("com.tvbox.yingxia/PluginHost/" + UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("com.tcbox.tvbox/PluginHost/" + UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let started = Instance(root: root)
         let process = started.process

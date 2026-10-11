@@ -160,7 +160,6 @@
 		0558AED26E6028C2881DD044 /* PythonHost */ = {isa = PBXFileReference; lastKnownFileType = folder; name = PythonHost; path = build/PythonHost; sourceTree = SOURCE_ROOT; };
 		06D9469858E5C5A118DED875 /* libffi.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = libffi.txt; sourceTree = "<group>"; };
 		084C8344E2997DB3ED8FE974 /* Keystone-GPL2.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Keystone-GPL2.txt"; sourceTree = "<group>"; };
-		0880682FDD3D3B413396938B /* tvbox */ = {isa = PBXFileReference; lastKnownFileType = folder; name = tvbox; path = .; sourceTree = SOURCE_ROOT; };
 		08B7C43C763200E67A22E365 /* Capstone-LLVM.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Capstone-LLVM.txt"; sourceTree = "<group>"; };
 		181C983C0018A97F2A086298 /* DiscoveryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoveryView.swift; sourceTree = "<group>"; };
 		2075419FEF0E1C161A31A9F0 /* RuntimeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeView.swift; sourceTree = "<group>"; };
@@ -186,6 +185,7 @@
 		90D706229ED242AE96AE52F8 /* Updates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Updates.swift; sourceTree = "<group>"; };
 		97E45A9F3834179C66B0892F /* BilibiliLiveView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BilibiliLiveView.swift; sourceTree = "<group>"; };
 		995F5F0DB35FE66B4F90B4FF /* unidbg.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = unidbg.txt; sourceTree = "<group>"; };
+		9A132E907040B34C416C3146 /* tvbox-silicon */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "tvbox-silicon"; path = .; sourceTree = SOURCE_ROOT; };
 		9B7E929CDDC1F085C6B55693 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		9C911ACB6C027C8F9A096409 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		A0E8559808CF7D11225EB30B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -350,7 +350,7 @@
 		A8F2C96E75A8FF40AD9C4F24 /* Packages */ = {
 			isa = PBXGroup;
 			children = (
-				0880682FDD3D3B413396938B /* tvbox */,
+				9A132E907040B34C416C3146 /* tvbox-silicon */,
 			);
 			name = Packages;
 			sourceTree = "<group>";
@@ -500,8 +500,8 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				30A036AA0B7CC9BDB73B6532 /* TVBox-iOS */,
 				6329C5C5F90A7209CE803328 /* TVBox-macOS */,
+				30A036AA0B7CC9BDB73B6532 /* TVBox-iOS */,
 				ED651BAC28903A6823382E23 /* TVBox-tvOS */,
 			);
 		};
@@ -809,7 +809,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = Yingxia;
+				INFOPLIST_KEY_CFBundleDisplayName = TVBox;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
@@ -835,7 +835,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.tvbox.yingxia.mac;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tcbox.tvbox.mac;
 				SDKROOT = macosx;
 			};
 			name = Release;
@@ -855,7 +855,7 @@
 					"@executable_path/Frameworks",
 				);
 				OTHER_LDFLAGS = "$(inherited) -Wl,-force_load,$(SRCROOT)/build/AppleRuntime/$(PLATFORM_NAME)/lib/libTVAppleRuntime.a -Wl,-export_dynamic -lc++ -lz -liconv -framework Security -framework CoreGraphics";
-				PRODUCT_BUNDLE_IDENTIFIER = com.tvbox.yingxia.ios;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tcbox.tvbox.ios;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -876,7 +876,7 @@
 					"@executable_path/Frameworks",
 				);
 				OTHER_LDFLAGS = "$(inherited) -Wl,-force_load,$(SRCROOT)/build/AppleRuntime/$(PLATFORM_NAME)/lib/libTVAppleRuntime.a -Wl,-export_dynamic -lc++ -lz -liconv -framework Security -framework CoreGraphics";
-				PRODUCT_BUNDLE_IDENTIFIER = com.tvbox.yingxia.tv;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tcbox.tvbox.tv;
 				SDKROOT = appletvos;
 				TARGETED_DEVICE_FAMILY = 3;
 			};
@@ -897,7 +897,7 @@
 					"@executable_path/Frameworks",
 				);
 				OTHER_LDFLAGS = "$(inherited) -Wl,-force_load,$(SRCROOT)/build/AppleRuntime/$(PLATFORM_NAME)/lib/libTVAppleRuntime.a -Wl,-export_dynamic -lc++ -lz -liconv -framework Security -framework CoreGraphics";
-				PRODUCT_BUNDLE_IDENTIFIER = com.tvbox.yingxia.ios;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tcbox.tvbox.ios;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -918,7 +918,7 @@
 					"@executable_path/Frameworks",
 				);
 				OTHER_LDFLAGS = "$(inherited) -Wl,-force_load,$(SRCROOT)/build/AppleRuntime/$(PLATFORM_NAME)/lib/libTVAppleRuntime.a -Wl,-export_dynamic -lc++ -lz -liconv -framework Security -framework CoreGraphics";
-				PRODUCT_BUNDLE_IDENTIFIER = com.tvbox.yingxia.tv;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tcbox.tvbox.tv;
 				SDKROOT = appletvos;
 				TARGETED_DEVICE_FAMILY = 3;
 			};
@@ -973,7 +973,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = Yingxia;
+				INFOPLIST_KEY_CFBundleDisplayName = TVBox;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
@@ -998,7 +998,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.tvbox.yingxia.mac;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tcbox.tvbox.mac;
 				SDKROOT = macosx;
 			};
 			name = Debug;

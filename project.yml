@@ -1,6 +1,6 @@
 name: TVBox
 options:
-  bundleIdPrefix: com.tvbox
+  bundleIdPrefix: com.tcbox
   developmentLanguage: en
   knownRegions: [en, zh-Hans, zh-Hant, ja]
   deploymentTarget:
@@ -13,7 +13,7 @@ settings:
     MARKETING_VERSION: '1.2.1'
     CURRENT_PROJECT_VERSION: '6'
     GENERATE_INFOPLIST_FILE: YES
-    INFOPLIST_KEY_CFBundleDisplayName: Yingxia
+    INFOPLIST_KEY_CFBundleDisplayName: TVBox
     INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.entertainment
     CODE_SIGN_STYLE: Automatic
     DEVELOPMENT_TEAM: ''
@@ -33,7 +33,7 @@ targetTemplates:
     info:
       path: Config/Info-${target_name}.plist
       properties:
-        CFBundleDisplayName: Yingxia
+        CFBundleDisplayName: TVBox
         CFBundleDevelopmentRegion: en
         CFBundleLocalizations: [en, zh-Hans, zh-Hant, ja]
         NSAppTransportSecurity:
@@ -58,7 +58,7 @@ targets:
         type: folder
         buildPhase: resources
     settings:
-      PRODUCT_BUNDLE_IDENTIFIER: com.tvbox.yingxia.mac
+      PRODUCT_BUNDLE_IDENTIFIER: com.tcbox.tvbox.mac
       ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
   TVBox-iOS:
     templates: [SharedApp]
@@ -81,7 +81,7 @@ targets:
       ENABLE_USER_SCRIPT_SANDBOXING: NO
       ENABLE_DEBUG_DYLIB: NO
       ARCHS: arm64
-      PRODUCT_BUNDLE_IDENTIFIER: com.tvbox.yingxia.ios
+      PRODUCT_BUNDLE_IDENTIFIER: com.tcbox.tvbox.ios
       ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
       TARGETED_DEVICE_FAMILY: '1,2'
     info:
@@ -110,5 +110,5 @@ targets:
       ENABLE_USER_SCRIPT_SANDBOXING: NO
       ENABLE_DEBUG_DYLIB: NO
       ARCHS: arm64
-      PRODUCT_BUNDLE_IDENTIFIER: com.tvbox.yingxia.tv
+      PRODUCT_BUNDLE_IDENTIFIER: com.tcbox.tvbox.tv
       ASSETCATALOG_COMPILER_APPICON_NAME: App Icon & Top Shelf Image

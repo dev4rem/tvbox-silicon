@@ -21,6 +21,9 @@
 "Updated %@" = "更新於 %@";
 "You can also enter another TVBox JSON subscription URL in Settings." = "也可以在設定中輸入其他 TVBox JSON 訂閱網址。";
 "Subscription" = "訂閱";
+"Subscriptions" = "訂閱";
+"Add Subscription" = "新增訂閱";
+"Remove" = "刪除";
 "TVBox JSON URL" = "TVBox JSON 網址";
 "Save and Refresh" = "儲存並更新訂閱";
 "Use Default URL" = "使用預設網址";
@@ -598,3 +601,4 @@
 // Player episodes
 "Previous Episode" = "上一集";
 "Next Episode" = "下一集";
+"TVBox, M3U or TXT URL" = "TVBox、M3U 或 TXT 網址";

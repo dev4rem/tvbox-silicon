@@ -56,7 +56,7 @@ public actor ScriptRuntime {
 enum ScriptAssets {
     static let root: URL? = Bundle.module.url(forResource: "ScriptAssets", withExtension: nil)
     static let cache: URL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("com.tvbox.yingxia/Scripts", isDirectory: true)
+        .appendingPathComponent("com.tcbox.tvbox/Scripts", isDirectory: true)
     static let profiles: URL = cache.appendingPathComponent("Profiles", isDirectory: true)
 
     // Widely shared drpy2 builds import their helper libraries from a qu.ax mirror that no longer

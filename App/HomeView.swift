@@ -14,6 +14,7 @@ struct HomeView: View {
         ScrollViewReader { reader in
             ScrollView {
                 VStack(alignment: .leading, spacing: Layout.sectionSpacing) {
+                    if store.entries.count > 1 { subscriptionSwitcher }
                     if !store.playbackHistory.entries.isEmpty { continueWatching }
                     if let config = store.subscription {
                         if store.orderedSites(config).contains(where: { store.pinnedSources.contains($0, origin: config.origin) }) {
@@ -108,6 +109,23 @@ struct HomeView: View {
     }
 
     // MARK: Sections
+
+    /// The visible library, when several subscriptions are imported. Each entry keeps
+    /// its own sources and playlists; switching swaps the shelves below.
+    private var subscriptionSwitcher: some View {
+        Menu {
+            ForEach(store.entries) { entry in
+                Button { store.selectSubscription(entry.id) } label: {
+                    Label(entry.displayName, systemImage: store.activeID == entry.id ? "checkmark" : "doc.plaintext")
+                }
+            }
+        } label: {
+            Label(store.entries.first(where: { $0.id == store.activeID })?.displayName ?? L10n.text("Subscription"),
+                  systemImage: "square.stack.3d.up")
+        }
+        .controlButton()
+        .accessibilityIdentifier("home.subscriptionSwitcher")
+    }
 
     private func pinnedSources(_ config: Subscription) -> some View {
         VStack(alignment: .leading, spacing: Layout.headerSpacing) {

@@ -21,6 +21,9 @@
 "Updated %@" = "Updated %@";
 "You can also enter another TVBox JSON subscription URL in Settings." = "You can also enter another TVBox JSON subscription URL in Settings.";
 "Subscription" = "Subscription";
+"Subscriptions" = "Subscriptions";
+"Add Subscription" = "Add Subscription";
+"Remove" = "Remove";
 "TVBox JSON URL" = "TVBox JSON URL";
 "Save and Refresh" = "Save and Refresh";
 "Use Default URL" = "Use Default URL";
@@ -598,3 +601,4 @@
 // Player episodes
 "Previous Episode" = "Previous Episode";
 "Next Episode" = "Next Episode";
+"TVBox, M3U or TXT URL" = "TVBox, M3U or TXT URL";

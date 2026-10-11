@@ -42,7 +42,7 @@ public final class Diagnostics: @unchecked Sendable {
 
     public init(directory: URL? = nil, capacity: Int = 512, fileLimit: Int = 2_000_000, fileCount: Int = 4) {
         self.directory = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("com.tvbox.yingxia/Logs", isDirectory: true)
+            .appendingPathComponent("com.tcbox.tvbox/Logs", isDirectory: true)
         self.capacity = max(1, capacity)
         self.fileLimit = max(16_384, fileLimit)
         self.fileCount = max(1, fileCount)

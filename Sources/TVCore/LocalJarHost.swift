@@ -73,7 +73,7 @@ public actor LocalJarHost {
         if let existing = sessions[key] { entry = existing }
         else {
             let task = Task {
-                let root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("com.tvbox.yingxia/JarHost", isDirectory: true)
+                let root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("com.tcbox.tvbox/JarHost", isDirectory: true)
                 let job = root.appendingPathComponent("Sessions/" + UUID().uuidString, isDirectory: true)
                 try FileManager.default.createDirectory(at: job, withIntermediateDirectories: true)
                 do {

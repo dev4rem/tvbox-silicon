@@ -126,9 +126,9 @@ public actor EmbeddedJarHost {
     /// Caches. tvOS only permits Caches; there a purge means preparing the plugin again.
     private static let storageRoot: URL = {
         let manager = FileManager.default
-        let cached = manager.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("com.tvbox.yingxia/EmbeddedPlugins", isDirectory: true)
+        let cached = manager.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("com.tcbox.tvbox/EmbeddedPlugins", isDirectory: true)
         #if os(iOS) || os(macOS)
-        var root = manager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("com.tvbox.yingxia/EmbeddedPlugins", isDirectory: true)
+        var root = manager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("com.tcbox.tvbox/EmbeddedPlugins", isDirectory: true)
         if !manager.fileExists(atPath: root.path) {
             try? manager.createDirectory(at: root.deletingLastPathComponent(), withIntermediateDirectories: true)
             if manager.fileExists(atPath: cached.path) { try? manager.moveItem(at: cached, to: root) }

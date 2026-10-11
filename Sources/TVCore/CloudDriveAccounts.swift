@@ -15,7 +15,7 @@ public struct CloudDriveAccounts: Codable, Sendable {
         #else
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         #endif
-        return base.appendingPathComponent("com.tvbox.yingxia/CloudDrive/accounts.json")
+        return base.appendingPathComponent("com.tcbox.tvbox/CloudDrive/accounts.json")
     }
     public static func load() throws -> Self {
         if FileManager.default.fileExists(atPath: fileURL.path) {

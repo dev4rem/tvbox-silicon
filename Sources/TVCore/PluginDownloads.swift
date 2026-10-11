@@ -3,7 +3,7 @@ import Foundation
 /// Coalesces downloads and reuses verified disk artifacts across app launches.
 /// SHA-256 is computed locally; expiration triggers HTTP revalidation.
 actor PluginDownloads {
-    static let shared = PluginDownloads(directory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("com.tvbox.yingxia/PluginDownloads", isDirectory: true))
+    static let shared = PluginDownloads(directory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("com.tcbox.tvbox/PluginDownloads", isDirectory: true))
     typealias Update = @Sendable (PluginPreparation.Stage, Int64, Int64?) -> Void
     private struct Cached {
         let data: Data

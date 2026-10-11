@@ -197,9 +197,9 @@ struct SettingsView: View {
         SettingsPage(title: L10n.text("Settings")) {
             // A waiting release leads the page; otherwise update status sits with About.
             if !updates.available.isEmpty { UpdateSettingsGroup() }
-            SettingsGroup(title: L10n.text("Subscription"), footer: store.notice) {
+            SettingsGroup(title: L10n.text("Subscriptions"), footer: store.notice) {
                 VStack(alignment: .leading, spacing: 12) {
-                    SettingsField(prompt: L10n.text("TVBox JSON URL"), text: $store.subscriptionAddress)
+                    SettingsField(prompt: L10n.text("TVBox, M3U or TXT URL"), text: $store.subscriptionAddress)
                     // One row whenever it fits; stack only when a narrow width or large text needs it.
                     ViewThatFits(in: .horizontal) {
                         HStack(spacing: 8) { subscriptionActions }
@@ -207,10 +207,22 @@ struct SettingsView: View {
                     }
                 }
                 .padding(14)
-                if let config = store.subscription {
-                    SettingsRow(symbol: "checkmark.seal.fill", tint: .green,
-                                title: L10n.text("Sources: %lld · Live playlists: %lld", config.sites.count, config.lives.count),
-                                subtitle: L10n.text("Last updated %@", config.importedAt.formatted(date: .abbreviated, time: .shortened)))
+                ForEach(store.entries) { entry in
+                    SettingsRow(symbol: store.activeID == entry.id ? "checkmark.seal.fill" : "doc.plaintext",
+                                tint: store.activeID == entry.id ? .green : .gray,
+                                title: entry.displayName,
+                                subtitle: L10n.text("Sources: %lld · Live playlists: %lld", entry.siteCount, entry.liveCount)) {
+                        HStack(spacing: 8) {
+                            Button(L10n.text("Refresh")) { Task { await store.refreshSubscription(entry.id) } }.settingsButton()
+                            Button(L10n.text("Remove")) { store.removeSubscription(entry.id) }.settingsButton()
+                        }
+                    }
+                }
+                if store.entries.count > 1 {
+                    Picker(L10n.text("Subscription"), selection: Binding(get: { store.activeID }, set: { if let id = $0 { store.selectSubscription(id) } })) {
+                        ForEach(store.entries) { entry in Text(entry.displayName).tag(Optional(entry.id)) }
+                    }
+                    .padding(.horizontal, 14).padding(.bottom, 14)
                 }
             }
             SettingsGroup(title: L10n.text("Accounts")) {
@@ -269,7 +281,7 @@ struct SettingsView: View {
         Button { Task { await store.importSubscription() } } label: {
             HStack(spacing: 6) {
                 if store.importing { ProgressView().controlSize(.mini) }
-                Text(store.importing ? L10n.text("Importing…") : L10n.text("Save and Refresh"))
+                Text(store.importing ? L10n.text("Importing…") : L10n.text("Add Subscription"))
                 if store.importing { ElapsedTime() }
             }
         }

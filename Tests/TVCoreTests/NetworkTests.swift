@@ -19,6 +19,9 @@ private final class MockProtocol: URLProtocol, @unchecked Sendable {
         } else if path == "/headers" {
             status = request.value(forHTTPHeaderField: "User-Agent") == "Custom" ? 200 : 403
             body = "#EXTM3U\n#EXTINF:-1,Channel\nhttps://example.com/live.m3u8"
+        } else if path == "/playlist.m3u" {
+            status = 200
+            body = "#EXTM3U\n#EXTINF:-1 group-title=\"News\",News One\nhttps://example.com/news.m3u8"
         } else if path == "/missing-id" {
             status = 200; body = #"{"list":[{"vod_play_from":"自动","vod_play_url":"1$opaque-episode"}]}"#
         } else if path == "/x/player/playurl" {
@@ -261,6 +264,16 @@ private final class OfflineProtocol: URLProtocol, @unchecked Sendable {
     #expect(config.origin.host == "xn--z7x900a.net")
     let (browserData, _) = try await client().get(url)
     #expect(String(decoding: browserData, as: UTF8.self).contains("Landing page"))
+}
+
+@Test func directPlaylistURLImportsAsSingleLiveSource() async throws {
+    let config = try await client().subscription(URL(string: "https://example.com/playlist.m3u")!)
+    #expect(config.sites.isEmpty)
+    #expect(config.lives.count == 1)
+    #expect(config.lives[0].url.path == "/playlist.m3u")
+    let channels = try await client().channels(config.lives[0])
+    #expect(channels.count == 1)
+    #expect(channels[0].name == "News One")
 }
 
 @MainActor @Test func searchResultsLoadLaterPagesUntilASourceRunsDry() async throws {

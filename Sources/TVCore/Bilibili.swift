@@ -54,7 +54,7 @@ public struct BilibiliAccount: Codable, Equatable, Sendable {
         #else
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         #endif
-        return base.appendingPathComponent("com.tvbox.yingxia/Bilibili/account.json")
+        return base.appendingPathComponent("com.tcbox.tvbox/Bilibili/account.json")
     }
     private static let defaultsKey = "bilibiliAccount"
 

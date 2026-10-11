@@ -21,6 +21,9 @@
 "Updated %@" = "更新日時：%@";
 "You can also enter another TVBox JSON subscription URL in Settings." = "設定で別の TVBox JSON 配信設定 URL を入力することもできます。";
 "Subscription" = "配信設定";
+"Subscriptions" = "配信設定";
+"Add Subscription" = "配信設定を追加";
+"Remove" = "削除";
 "TVBox JSON URL" = "TVBox JSON URL";
 "Save and Refresh" = "保存して更新";
 "Use Default URL" = "既定の URL を使用";
@@ -598,3 +601,4 @@
 // Player episodes
 "Previous Episode" = "前のエピソード";
 "Next Episode" = "次のエピソード";
+"TVBox, M3U or TXT URL" = "TVBox・M3U・TXT の URL";

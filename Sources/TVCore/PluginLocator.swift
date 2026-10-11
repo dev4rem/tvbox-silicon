@@ -49,7 +49,7 @@ public actor PluginLocator {
     private var classes: [String: Set<String>] = [:]
     private var unreadable: Set<URL> = []
     private let indexFile = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("com.tvbox.yingxia/PluginClassIndex.json")
+        .appendingPathComponent("com.tcbox.tvbox/PluginClassIndex.json")
 
     public func use(_ archives: [URL]) {
         guard archives != candidates else { return }

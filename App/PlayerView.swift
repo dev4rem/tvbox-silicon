@@ -293,11 +293,13 @@ private struct PlayerSurface: NSViewRepresentable {
     func makeNSView(context: Context) -> AVPlayerView {
         let view = AVPlayerView()
         view.player = player
-        view.controlsStyle = .floating
+        // Same AVKit scrubber trap as the window player: no native controls.
+        view.controlsStyle = .none
         view.showsFullScreenToggleButton = true
         return view
     }
-    func updateNSView(_ view: AVPlayerView, context: Context) { view.player = player }
+    func updateNSView(_ view: AVPlayerView, context: Context) { if view.player !== player { view.player = player } }
+    static func dismantleNSView(_ view: AVPlayerView, coordinator: ()) { view.player = nil }
 }
 #elseif os(iOS)
 private struct NativePlayerView: View {
@@ -446,6 +448,11 @@ private struct NativePlayerView: UIViewControllerRepresentable {
             window = target
         }
         target.title = channel.name
+        // Detach the old player view before tearing down its item: AVPlayerView's
+        // timeline scrubber traps when the item is replaced while still observed
+        // (EXC_BREAKPOINT in AVTimelineScrubberViewModel on macOS 27).
+        target.contentView = nil
+        session.stop()
         target.contentView = NSHostingView(rootView: DesktopPlaybackView(channel: channel, session: session, window: target).environment(store))
         startCatalogPlayback(session, channel: channel, store: store)
         target.makeKeyAndOrderFront(nil)
@@ -454,8 +461,9 @@ private struct NativePlayerView: UIViewControllerRepresentable {
     func close() { window?.close() }
 
     func windowWillClose(_ notification: Notification) {
-        session.stop()
+        // Dismantle (view.player = nil) before nil-ing the item, for the same reason.
         window?.contentView = nil
+        session.stop()
         window = nil
         let callback = onClose
         onClose = nil
@@ -669,7 +677,10 @@ private struct DesktopNativePlayer: NSViewRepresentable {
     var live = false
     func makeNSView(context: Context) -> AVPlayerView {
         let view = AVPlayerView()
-        view.controlsStyle = live ? .none : .floating
+        // AVPlayerView's timeline scrubber (floating AND inline) traps in
+        // AVTimelineScrubberViewModel's Binding to _currentTime on macOS 27
+        // (EXC_BREAKPOINT). .none creates no scrubber; play/mute live in topBar.
+        view.controlsStyle = .none
         view.player = player
         view.showsFullScreenToggleButton = true
         view.allowsPictureInPicturePlayback = true
@@ -678,9 +689,8 @@ private struct DesktopNativePlayer: NSViewRepresentable {
         return view
     }
     func updateNSView(_ view: AVPlayerView, context: Context) {
-        let style: AVPlayerViewControlsStyle = live ? .none : .floating
-        if view.controlsStyle != style { view.controlsStyle = style }
-        view.player = player
+        if view.controlsStyle != .none { view.controlsStyle = .none }
+        if view.player !== player { view.player = player }
         view.videoGravity = fillsFrame ? .resizeAspectFill : .resizeAspect
     }
     static func dismantleNSView(_ view: AVPlayerView, coordinator: ()) { view.player = nil }

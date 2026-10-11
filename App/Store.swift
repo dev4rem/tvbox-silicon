@@ -9,6 +9,11 @@ import TVCore
     let playbackDefaults: UserDefaults
     let pinnedSources: PinnedSources
     var resumingHistoryID: String?
+    /// Every imported subscription, kept side by side. Importing a new URL appends
+    /// (or refreshes the entry with the same address) instead of replacing the others.
+    var entries: [SavedSubscription] = []
+    var activeID: UUID?
+    /// The selected subscription's content. Views keep reading this; switching entries swaps it.
     var subscription: Subscription?
     var subscriptionAddress: String
     var favorites: [Channel] = []
@@ -38,7 +43,7 @@ import TVCore
         self.defaults = defaults
         #if DEBUG
         playbackDefaults = defaults.bool(forKey: "qaIsolatedData")
-            ? UserDefaults(suiteName: "com.tvbox.yingxia.qa.player") ?? defaults : defaults
+            ? UserDefaults(suiteName: "com.tcbox.tvbox.qa.player") ?? defaults : defaults
         playbackHistory = defaults.bool(forKey: "qaIsolatedData")
             ? PlaybackHistory(file: URL.cachesDirectory.appending(path: "qa-player-history.json"), defaults: playbackDefaults) : .shared
         #else
@@ -48,14 +53,12 @@ import TVCore
         pinnedSources = PinnedSources(defaults: playbackDefaults)
         autoPlayNext = defaults.object(forKey: "autoPlayNextEpisode") == nil || defaults.bool(forKey: "autoPlayNextEpisode")
         subscriptionAddress = defaults.string(forKey: "subscriptionAddress") ?? Self.defaultURL
-        let cached = (try? Data(contentsOf: Self.subscriptionFile)) ?? defaults.data(forKey: "subscription")
-        if let cached { subscription = (try? JSONDecoder().decode(Subscription.self, from: cached))?.withBuiltInSites() }
-        if let subscription { Self.registerPlugins(subscription) }
-        // Older builds kept the whole subscription in defaults; move it to the file and drop the key.
         if persistsChanges, let legacy = defaults.data(forKey: "subscription") {
-            try? Self.saveSubscription(legacy)
+            // Older builds kept the whole subscription in defaults; move it into the entries once.
+            migrateDefaultsLegacy(legacy)
             defaults.removeObject(forKey: "subscription")
         }
+        loadEntries()
         if let data = defaults.data(forKey: "favorites") { favorites = (try? JSONDecoder().decode([Channel].self, from: data)) ?? [] }
         DownloadLibrary.shared.resolver = { [weak self] item in
             guard let self else { throw CancellationError() }
@@ -75,30 +78,91 @@ import TVCore
         return try await client.resolvePlayback(plan, choice: plan.choices[0])
     }
     /// Large subscriptions run to megabytes, past the defaults size limit that aborts tvOS apps,
-    /// so the parsed subscription lives in a file. tvOS only offers Caches, which the system may purge;
-    /// `restoreSubscription()` refetches it from the saved address when that happens.
-    private static var subscriptionFile: URL {
+    /// so each parsed subscription lives in its own file and only the index stays in defaults.
+    /// tvOS only offers Caches, which the system may purge; `restoreSubscription()` refetches
+    /// the selected entry when its file is gone.
+    private static var storeDirectory: URL {
         #if os(tvOS)
-        let directory = URL.cachesDirectory
+        URL.cachesDirectory
         #else
-        let directory = URL.applicationSupportDirectory
+        URL.applicationSupportDirectory
         #endif
-        return directory.appending(path: "subscription.json")
     }
-    private static func saveSubscription(_ data: Data) throws {
-        try FileManager.default.createDirectory(at: subscriptionFile.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try data.write(to: subscriptionFile, options: .atomic)
+    private static var indexFile: URL { storeDirectory.appending(path: "subscriptions.json") }
+    private static func dataFile(id: UUID) -> URL { storeDirectory.appending(path: "subscription-\(id.uuidString).json") }
+    private static var legacyFile: URL { storeDirectory.appending(path: "subscription.json") }
+    private static func saveData(_ data: Data, id: UUID) throws {
+        try FileManager.default.createDirectory(at: storeDirectory, withIntermediateDirectories: true)
+        try data.write(to: dataFile(id: id), options: .atomic)
+    }
+
+    /// Older builds kept the whole subscription in defaults; move it into the entries once.
+    private func migrateDefaultsLegacy(_ legacy: Data) {
+        guard (try? Data(contentsOf: Self.indexFile)) == nil,
+              let value = try? JSONDecoder().decode(Subscription.self, from: legacy) else { return }
+        let entry = SavedSubscription(id: UUID(), address: defaults.string(forKey: "subscriptionAddress") ?? value.origin.absoluteString,
+                                      displayName: Self.displayName(for: value.origin),
+                                      siteCount: value.sites.count, liveCount: value.lives.count, importedAt: value.importedAt)
+        try? Self.saveData(legacy, id: entry.id)
+        try? Self.saveIndex([entry])
+    }
+
+    /// Loads the index and the selected entry; migrates the pre-list single file once.
+    private func loadEntries() {
+        if persistsChanges, let legacy = try? Data(contentsOf: Self.legacyFile),
+           (try? Data(contentsOf: Self.indexFile)) == nil {
+            let id = UUID()
+            if let value = try? JSONDecoder().decode(Subscription.self, from: legacy) {
+                let entry = SavedSubscription(id: id, address: defaults.string(forKey: "subscriptionAddress") ?? value.origin.absoluteString,
+                                              displayName: Self.displayName(for: value.origin),
+                                              siteCount: value.sites.count, liveCount: value.lives.count, importedAt: value.importedAt)
+                try? Self.saveData(legacy, id: id)
+                try? Self.saveIndex([entry])
+            }
+            try? FileManager.default.removeItem(at: Self.legacyFile)
+        }
+        entries = (try? Data(contentsOf: Self.indexFile)).flatMap { try? JSONDecoder().decode([SavedSubscription].self, from: $0) } ?? []
+        if let saved = defaults.string(forKey: "activeSubscriptionID"), let id = UUID(uuidString: saved),
+           entries.contains(where: { $0.id == id }) {
+            activeID = id
+        } else {
+            activeID = entries.first?.id
+        }
+        activateCurrent()
+    }
+
+    private static func saveIndex(_ entries: [SavedSubscription]) throws {
+        try FileManager.default.createDirectory(at: storeDirectory, withIntermediateDirectories: true)
+        try JSONEncoder().encode(entries).write(to: indexFile, options: .atomic)
+    }
+
+    private static func displayName(for url: URL) -> String { url.host() ?? url.absoluteString }
+
+    /// Decodes the selected entry and publishes it as `subscription`.
+    private func activateCurrent() {
+        guard let id = activeID, entries.contains(where: { $0.id == id }),
+              let data = try? Data(contentsOf: Self.dataFile(id: id)),
+              let value = try? JSONDecoder().decode(Subscription.self, from: data) else {
+            if activeID != nil, entries.isEmpty { activeID = nil }
+            subscription = nil
+            return
+        }
+        subscription = value.withBuiltInSites()
+        Self.registerPlugins(value)
     }
     /// Lets sources on a shared spider borrow classes from the subscription's other plugin archives.
     private static func registerPlugins(_ subscription: Subscription) {
         let archives = subscription.pluginArchives
         Task { await PluginLocator.shared.use(archives) }
     }
-    /// Refetches a previously imported subscription whose cached copy is gone.
+    /// Refetches the selected subscription whose cached file is gone.
     func restoreSubscription() async {
-        guard subscription == nil, defaults.string(forKey: "subscriptionAddress") != nil else { return }
+        guard subscription == nil, let id = activeID,
+              entries.contains(where: { $0.id == id }) else { return }
         await importSubscription()
     }
+    /// Imports a URL as its own entry: a new address appends, a known address refreshes
+    /// in place. Other entries are never touched, so the first subscription survives the second.
     func importSubscription(address: String? = nil) async {
         guard !importing else { return }
         importing = true; error = nil; notice = nil
@@ -106,10 +170,10 @@ import TVCore
         do {
             let url = try WebAddress.resolve(address ?? subscriptionAddress)
             let value = try await http.subscription(url)
-            if persistsChanges {
-                try Self.saveSubscription(JSONEncoder().encode(value))
-                defaults.set(url.absoluteString, forKey: "subscriptionAddress")
-            }
+            // Resolve the entry first so the data file and the index share one id.
+            let id = Self.entryID(for: url, origin: value.origin, in: entries) ?? UUID()
+            if persistsChanges { try Self.saveData(JSONEncoder().encode(value), id: id) }
+            upsertEntry(id: id, address: url.absoluteString, value: value)
             subscriptionAddress = url.absoluteString
             searchModel.reset()
             recommendationModel.reset()
@@ -117,6 +181,62 @@ import TVCore
             Self.registerPlugins(value)
             notice = L10n.text("Imported sources: %lld · Live playlists: %lld", value.sites.count, value.lives.count)
         } catch { self.error = L10n.text("Import failed: %@", error.localizedDescription) }
+    }
+
+    /// Switches the visible library to another imported subscription.
+    func selectSubscription(_ id: UUID) {
+        guard entries.contains(where: { $0.id == id }), id != activeID else { return }
+        activeID = id
+        if persistsChanges { defaults.set(id.uuidString, forKey: "activeSubscriptionID") }
+        searchModel.reset()
+        recommendationModel.reset()
+        activateCurrent()
+    }
+
+    /// Re-imports one entry's address without touching the others.
+    func refreshSubscription(_ id: UUID) async {
+        guard let entry = entries.first(where: { $0.id == id }) else { return }
+        let previous = subscriptionAddress
+        subscriptionAddress = entry.address
+        await importSubscription(address: entry.address)
+        subscriptionAddress = previous
+    }
+
+    /// Forgets one subscription; the others stay. Selecting a neighbour keeps a library on screen.
+    func removeSubscription(_ id: UUID) {
+        entries.removeAll { $0.id == id }
+        try? FileManager.default.removeItem(at: Self.dataFile(id: id))
+        if persistsChanges { try? Self.saveIndex(entries) }
+        if activeID == id {
+            activeID = entries.first?.id
+            if persistsChanges {
+                if let activeID { defaults.set(activeID.uuidString, forKey: "activeSubscriptionID") }
+                else { defaults.removeObject(forKey: "activeSubscriptionID") }
+            }
+            searchModel.reset()
+            recommendationModel.reset()
+            activateCurrent()
+        }
+    }
+
+    /// The entry a URL belongs to, matched by canonical address or response origin,
+    /// so re-imports refresh in place.
+    private static func entryID(for url: URL, origin: URL, in entries: [SavedSubscription]) -> UUID? {
+        entries.first { $0.address == url.absoluteString || $0.address == origin.absoluteString }?.id
+    }
+
+    private func upsertEntry(id: UUID, address: String, value: Subscription) {
+        let entry = SavedSubscription(id: id, address: address, displayName: Self.displayName(for: value.origin),
+                                      siteCount: value.sites.count, liveCount: value.lives.count, importedAt: value.importedAt)
+        if let index = entries.firstIndex(where: { $0.id == id }) { entries[index] = entry }
+        else { entries.append(entry) }
+        setActive(id)
+        if persistsChanges { try? Self.saveIndex(entries) }
+    }
+
+    private func setActive(_ id: UUID) {
+        activeID = id
+        if persistsChanges { defaults.set(id.uuidString, forKey: "activeSubscriptionID") }
     }
     func searchVideos(_ title: String) {
         guard let config = subscription else { return }
@@ -227,8 +347,18 @@ import TVCore
     }
 }
 
-struct PlaybackCatalog {
-    let video: Video
+/// One imported subscription in the side-by-side list. The parsed content lives in
+/// its own data file; the index only carries what lists need to display.
+struct SavedSubscription: Codable, Identifiable, Sendable {
+    var id: UUID
+    var address: String
+    var displayName: String
+    var siteCount: Int
+    var liveCount: Int
+    var importedAt: Date
+}
+
+struct PlaybackCatalog {    let video: Video
     let client: CatalogClient
     let scope: String
     var playlist: EpisodePlaylist { EpisodePlaylist(video.episodes) }
