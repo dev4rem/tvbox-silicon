@@ -1,6 +1,9 @@
 # PROJECT_STATUS.md — TCBox fork 交接文档
 
 > 位置：`/Volumes/Jie_4T/apple/tvbox-silicon`（2026-10-11 由 `tmp/tvbox-silicon` 移至此，原主仓 checkout 已被替换）
+> Git：`origin` = fork（dev4rem），`upstream` = 原仓（jo32）；TCBox 改动已 commit（`e7ba6ff`）并 push 到 fork，
+> 与 upstream 同步（upstream 无超前提交）。后续同步：`git fetch upstream && git merge upstream/main`，
+> 冲突看 §8 末尾三处。
 > 更新：2026-10-11 · 基线 `7b66c6b`，全部改动未 commit
 
 ## 1. 当前目标
