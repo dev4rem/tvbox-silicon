@@ -82,14 +82,19 @@ extension View {
 
 // Content-first surfaces: neutral backgrounds, quiet controls, and strong selection contrast.
 
-/// Warm palette: an apricot accent on espresso and cream canvases.
+/// The icon's navy canvases with neutral controls, as in the TV app: the active state is light on
+/// dark (dark on light), never a hue, so it reads the same on Liquid Glass.
 enum Brand {
-    /// Apricot on dark canvases; a deeper burnt orange on light ones so text and links keep contrast.
-    /// A real hue, not `.primary`: as a tint, `.primary` turned prominent buttons white-on-white.
-    static let accent = Color(light: Color(red: 0.76, green: 0.33, blue: 0.06), dark: Color(red: 1.0, green: 0.62, blue: 0.30))
+    /// Selection, prominent actions and progress. A fixed grey rather than `.primary`: as a tint,
+    /// `.primary` turned prominent buttons white-on-white. Kept just short of white so a focused
+    /// control (pure white) still stands out from a prominent one.
+    static let accent = Color(light: Color(white: 0.12), dark: Color(white: 0.92))
     /// Label colour on an accent fill.
-    static let onAccent = Color(light: .white, dark: Color(red: 0.20, green: 0.09, blue: 0.02))
-    static let terracotta = Color(red: 0.86, green: 0.40, blue: 0.30)
+    static let onAccent = Color(light: .white, dark: Color(white: 0.06))
+    /// The icon's cyan, for decoration only (icon tiles, charts, artwork placeholders), not for state.
+    static let cyan = Color(red: 0.30, green: 0.78, blue: 1.0)
+    static let indigo = Color(red: 0.42, green: 0.50, blue: 1.0)
+    static let teal = Color(red: 0.20, green: 0.84, blue: 0.80)
     static let amber = Color(red: 1.0, green: 0.76, blue: 0.30)
     static let rose = Color(red: 0.95, green: 0.38, blue: 0.42)
     /// Yingxia's own credit. Third-party notices keep their authors' copyright lines unchanged.
@@ -144,15 +149,15 @@ enum Layout {
 struct Backdrop: View {
     @Environment(\.colorScheme) private var scheme
     var body: some View {
-        // Flat warm canvas (espresso / cream); artwork supplies the rest of the colour.
-        (scheme == .dark ? Color(red: 0.086, green: 0.063, blue: 0.047) : Color(red: 0.98, green: 0.965, blue: 0.94)).ignoresSafeArea()
+        // Flat canvas (the icon's navy / cool white); artwork supplies the rest of the colour.
+        (scheme == .dark ? Color(red: 0.020, green: 0.035, blue: 0.090) : Color(red: 0.955, green: 0.965, blue: 0.985)).ignoresSafeArea()
     }
 }
 
 struct Surface: View {
     @Environment(\.colorScheme) private var scheme
     var body: some View {
-        (scheme == .dark ? Color(red: 0.17, green: 0.13, blue: 0.10) : Color(red: 0.955, green: 0.93, blue: 0.895))
+        (scheme == .dark ? Color(red: 0.075, green: 0.105, blue: 0.19) : Color(red: 0.915, green: 0.935, blue: 0.965))
     }
 }
 
@@ -225,6 +230,15 @@ extension View {
         buttonStyle(LiftButtonStyle())
         #endif
     }
+
+    /// For cards that paint their own focus state (source cards).
+    @ViewBuilder func tileButton() -> some View {
+        #if os(tvOS)
+        buttonStyle(TVTileStyle())
+        #else
+        buttonStyle(LiftButtonStyle())
+        #endif
+    }
 }
 
 /// Pointer-aware press and hover feedback for content cards.
@@ -250,7 +264,7 @@ struct LiftButtonStyle: ButtonStyle {
 
 struct IconTile: View {
     let symbol: String
-    var tint: Color = Brand.accent
+    var tint: Color = Brand.cyan
     var size: CGFloat = 44
     var body: some View {
         #if os(tvOS)
@@ -313,8 +327,8 @@ private struct FilterChipStyle: ButtonStyle {
 #endif
 
 #if os(tvOS)
-/// Liquid Glass filter chip: clear glass at rest, brand-tinted glass for the selection, and a bright
-/// white glass lift on focus.
+/// Liquid Glass filter chip: clear glass at rest, a lighter glass for the selection, and a bright
+/// white glass lift on focus, as in the TV app.
 private struct TVChipStyle: ButtonStyle {
     let selected: Bool
     func makeBody(configuration: Configuration) -> some View { Plate(configuration: configuration, selected: selected) }
@@ -326,7 +340,7 @@ private struct TVChipStyle: ButtonStyle {
         var body: some View {
             configuration.label
                 .font(.system(size: 26, weight: .semibold))
-                .foregroundStyle(focused ? Color.black : selected ? Brand.onAccent : Color.white)
+                .foregroundStyle(focused ? Color.black : Color.white)
                 .padding(.horizontal, 22).padding(.vertical, 13)
                 .frame(minHeight: 58)
                 .glassSurface(glass, in: Capsule())
@@ -338,9 +352,26 @@ private struct TVChipStyle: ButtonStyle {
         }
         private var glass: GlassStyle {
             if focused { return .regular.tint(.white.opacity(0.9)).interactive() }
-            if selected { return .regular.tint(Brand.accent).interactive() }
+            if selected { return .regular.tint(.white.opacity(0.28)).interactive() }
             return .regular.interactive()
         }
+    }
+}
+
+extension View {
+    /// A Liquid Glass capsule that turns white on focus, like the chips.
+    func glassPill() -> some View { buttonStyle(TVChipStyle(selected: false)) }
+}
+
+/// The query as a glass pill after a magnifying glass, as in the TV app's search. The remote's
+/// keyboard has no return key, so this is what runs a typed search.
+struct SearchQueryButton: View {
+    let query: String
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) { Label(query, systemImage: "magnifyingglass").lineLimit(1) }
+            .glassPill()
+            .accessibilityLabel(L10n.text("Search %@", query))
     }
 }
 #endif
@@ -370,6 +401,8 @@ struct Chip: View {
     var fill = false
     /// Leads with the Bilibili mark.
     var mark = false
+    /// A status dot after the title, such as a source's health.
+    var dot: Color? = nil
     let action: () -> Void
     @Environment(\.stripDrag) private var drag
     var body: some View {
@@ -377,6 +410,7 @@ struct Chip: View {
             HStack(spacing: 5) {
                 if mark { BilibiliGlyph(size: 22).foregroundStyle(selected ? AnyShapeStyle(.primary) : AnyShapeStyle(BilibiliMark.blue)) }
                 Text(title).lineLimit(1)
+                if let dot { Image(systemName: "circle.fill").font(.system(size: 12)).foregroundStyle(dot) }
             }.padding(.horizontal, 4).frame(maxWidth: fill ? .infinity : nil)
         }.accessibilityAddTraits(selected ? [.isSelected] : [])
         #if os(tvOS)
@@ -530,12 +564,14 @@ private actor PosterLoader {
 struct PosterImage: View {
     let url: URL?
     var headers: [String: String] = [:]
+    /// Shown until the image loads, and when there is none.
+    var symbol = "film"
     @State private var bitmap: PosterBitmap?
     private var resource: PosterResource? { url.map { PosterResource(url: $0, headers: headers) } }
     var body: some View {
         ZStack {
             Color(white: 0.20)
-            Image(systemName: "film").font(.title2).foregroundStyle(.white.opacity(0.55))
+            Image(systemName: symbol).font(.title2).foregroundStyle(.white.opacity(0.55))
             if let bitmap { Color.clear.overlay { Image(decorative: bitmap.image, scale: 1).resizable().scaledToFill() } }
         }
         // A filled cover is wider than its frame; clip its drawing and its hit area, or the overflow
@@ -673,14 +709,33 @@ struct ChipSkeletonRow: View {
 extension View {
     /// While a page is still loading it may have no focusable control. tvOS then sends
     /// the Menu/Back press to the system, which leaves the app instead of going back.
-    @ViewBuilder func loadingFocus(onExit: @escaping () -> Void) -> some View {
+    /// `takeFocus` claims focus for pages with nothing else to focus (a video page's header).
+    @ViewBuilder func loadingFocus(takeFocus: Bool = false, onExit: @escaping () -> Void) -> some View {
         #if os(tvOS)
-        focusable().onExitCommand(perform: onExit)
+        modifier(LoadingFocus(takeFocus: takeFocus, onExit: onExit))
         #else
         self
         #endif
     }
 }
+
+#if os(tvOS)
+/// tvOS does not move focus onto a plain focusable view in a newly pushed page, so the view takes
+/// it once the push settles. Without focus the Back press never reaches `onExitCommand`.
+private struct LoadingFocus: ViewModifier {
+    let takeFocus: Bool
+    let onExit: () -> Void
+    @FocusState private var focused: Bool
+    func body(content: Content) -> some View {
+        content.focusable().focused($focused).onExitCommand(perform: onExit)
+            .task {
+                guard takeFocus else { return }
+                try? await Task.sleep(for: .milliseconds(300))
+                focused = true
+            }
+    }
+}
+#endif
 
 struct DetailSkeleton: View {
     var body: some View {
@@ -885,9 +940,24 @@ struct ErrorStateCard: View {
 
 #if os(tvOS)
 enum TVStyle {
-    static let background = Color(red: 0.086, green: 0.063, blue: 0.047)
-    static let surface = Color(red: 0.18, green: 0.14, blue: 0.11)
-    static let raised = Color(red: 0.25, green: 0.195, blue: 0.15)
+    static let background = Color(red: 0.020, green: 0.035, blue: 0.090)
+    static let surface = Color(red: 0.09, green: 0.125, blue: 0.22)
+    static let raised = Color(red: 0.13, green: 0.175, blue: 0.29)
+}
+/// Tiles that draw their own surface and light it up on focus (`\.isFocused` reaches the label),
+/// so there is no second plate around them: just the lift.
+private struct TVTileStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { Tile(configuration: configuration) }
+    private struct Tile: View {
+        let configuration: ButtonStyleConfiguration
+        @Environment(\.isFocused) private var focused
+        var body: some View {
+            configuration.label
+                .scaleEffect(configuration.isPressed ? 0.98 : focused ? 1.05 : 1)
+                .shadow(color: .black.opacity(focused ? 0.5 : 0), radius: 24, y: 14)
+                .animation(.easeOut(duration: 0.18), value: focused)
+        }
+    }
 }
 private struct TVCardStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View { Card(configuration: configuration) }
@@ -954,7 +1024,7 @@ private struct TVControlStyle: ButtonStyle {
                 .foregroundStyle(focused ? Color.black : prominent ? Brand.onAccent : Color.white)
                 .padding(.horizontal, 24).padding(.vertical, 15)
                 .frame(minHeight: 62)
-                // Focus stays white, as everywhere on tvOS; the primary action wears the brand cyan.
+                // Focus stays white, as everywhere on tvOS; the primary action is a near-white fill.
                 .background(focused ? Color.white : prominent ? Brand.accent : TVStyle.surface, in: RoundedRectangle(cornerRadius: 14))
                 .opacity(enabled ? 1 : 0.35)
                 .scaleEffect(configuration.isPressed ? 0.97 : focused ? 1.02 : 1)

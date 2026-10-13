@@ -722,6 +722,11 @@ private struct QualityPicker: View {
         guard let store, store.autoPlayNext, let next = store.nextEpisode(after: channel) else { return }
         store.selectEpisode(next, from: channel)
     }
+    session.onUnplayableFile = { [weak store, weak session] in
+        guard let store, let other = store.transcodedLine(for: channel) else { return nil }
+        store.selectEpisode(other, from: channel) { session?.lineSwitchFailed($0) }
+        return other.flag
+    }
     if let context = channel.historyContext, let next = store.nextEpisode(after: channel),
        let catalog = store.catalog(for: channel), context.sourceKey != Bilibili.siteKey {
         session.catalogDanmaku.prefetch(PlaybackHistoryContext(origin: context.origin, site: catalog.client.site,

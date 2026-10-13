@@ -1,6 +1,424 @@
 {
   "releases": [
     {
+      "version": "1.6",
+      "date": "2026-10-14",
+      "links": {
+        "macos": "https://download.getmegaportal.com/yingxia/1.6/Yingxia-1.6-macos-arm64.dmg",
+        "ios": "https://yingxia.getmegaportal.com/#install-ios",
+        "tvos": "https://yingxia.getmegaportal.com/#install-tv"
+      },
+      "features": [
+        {
+          "symbol": "music.note",
+          "title": {
+            "en": "Music",
+            "zh-Hans": "音乐",
+            "zh-Hant": "音樂",
+            "ja": "ミュージック"
+          },
+          "detail": {
+            "en": "A new Music tab searches songs, albums and playlists across QQ Music and NetEase Cloud Music. Choose a song and Yingxia finds a working channel, lossless first, and shows the format it actually plays, such as FLAC · 24-bit / 44.1 kHz. Albums and playlists play through, skipping songs that can’t be played.",
+            "zh-Hans": "新的“音乐”标签可以同时搜索 QQ 音乐和网易云音乐的歌曲、专辑和歌单。选择一首歌，映匣会找到可用的渠道，优先无损，并显示实际播放的格式，例如 FLAC · 24-bit / 44.1 kHz。专辑和歌单会连续播放，无法播放的歌曲自动跳过。",
+            "zh-Hant": "新的「音樂」標籤可以同時搜尋 QQ 音樂和網易雲音樂的歌曲、專輯和歌單。選擇一首歌，映匣會找到可用的渠道，優先無損，並顯示實際播放的格式，例如 FLAC · 24-bit / 44.1 kHz。專輯和歌單會連續播放，無法播放的歌曲自動略過。",
+            "ja": "新しい「ミュージック」タブで、QQ Music と NetEase Cloud Music の曲、アルバム、プレイリストをまとめて検索できます。曲を選ぶと映匣が再生できるチャンネルをロスレス優先で見つけ、FLAC · 24-bit / 44.1 kHz のように実際の形式を表示します。アルバムやプレイリストは続けて再生され、再生できない曲はスキップします。"
+          }
+        },
+        {
+          "symbol": "quote.bubble.fill",
+          "title": {
+            "en": "Lyrics that follow along",
+            "zh-Hans": "同步歌词",
+            "zh-Hant": "同步歌詞",
+            "ja": "歌詞の同期表示"
+          },
+          "detail": {
+            "en": "Lyrics appear by themselves and keep the line being sung in view, with translations where the catalog has them. If a song’s lyrics run early or late, move them in half seconds; Yingxia remembers it for that song.",
+            "zh-Hans": "歌词自动出现，并始终显示正在演唱的一句，曲库有翻译时一并显示。如果歌词偏早或偏晚，可以按半秒调整，映匣会为这首歌记住。",
+            "zh-Hant": "歌詞自動出現，並始終顯示正在演唱的一句，曲庫有翻譯時一併顯示。如果歌詞偏早或偏晚，可以按半秒調整，映匣會為這首歌記住。",
+            "ja": "歌詞は自動で表示され、歌われている行を常に表示します。カタログに翻訳があれば一緒に表示します。歌詞が早い・遅いときは 0.5 秒ずつ調整でき、曲ごとに記憶されます。"
+          }
+        },
+        {
+          "symbol": "clock.arrow.circlepath",
+          "title": {
+            "en": "Recently Played and Continue Playing",
+            "zh-Hans": "最近播放与继续播放",
+            "zh-Hant": "最近播放與繼續播放",
+            "ja": "最近再生した項目と再生の続き"
+          },
+          "detail": {
+            "en": "The Music tab lists the songs, albums and playlists you played, and picks up where you stopped, even after the app was closed.",
+            "zh-Hans": "“音乐”标签会列出你播放过的歌曲、专辑和歌单，并从上次停下的地方继续播放，即使应用已关闭。",
+            "zh-Hant": "「音樂」標籤會列出你播放過的歌曲、專輯和歌單，並從上次停下的地方繼續播放，即使 App 已關閉。",
+            "ja": "「ミュージック」タブに再生した曲、アルバム、プレイリストが並び、App を閉じた後でも止めたところから再生できます。"
+          }
+        },
+        {
+          "symbol": "appletv.fill",
+          "platforms": [
+            "tvos"
+          ],
+          "title": {
+            "en": "Music on Apple TV",
+            "zh-Hans": "Apple TV 上的音乐",
+            "zh-Hant": "Apple TV 上的音樂",
+            "ja": "Apple TV のミュージック"
+          },
+          "detail": {
+            "en": "Songs play full screen on the cover’s colours, with the lyrics beside it. The remote works as in Apple’s player: click left or right for 10 seconds, swipe to scrub, and find previous, next, lyrics, channels and Up Next in the controls.",
+            "zh-Hans": "歌曲以封面色彩为背景全屏播放，歌词就在旁边。遥控器的用法与系统播放器一致：向左或向右按快退或快进 10 秒，滑动可拖动进度，上一首、下一首、歌词、播放渠道和待播清单都在控制栏里。",
+            "zh-Hant": "歌曲以封面色彩為背景全螢幕播放，歌詞就在旁邊。遙控器的用法與系統播放器一致：向左或向右按倒退或快轉 10 秒，滑動可拖曳進度，上一首、下一首、歌詞、播放渠道和待播清單都在控制列裡。",
+            "ja": "曲はジャケットの色を背景に全画面で再生され、横に歌詞が並びます。リモコンは標準プレーヤーと同じで、左右のクリックで 10 秒移動、スワイプでシーク。前へ、次へ、歌詞、チャンネル、次に再生はコントロールにあります。"
+          }
+        },
+        {
+          "symbol": "qrcode",
+          "title": {
+            "en": "Sign in to Baidu Netdisk and Aliyun Drive by scanning a code",
+            "zh-Hans": "扫码登录百度网盘和阿里云盘",
+            "zh-Hant": "掃碼登入百度網盤和阿里雲盤",
+            "ja": "コードのスキャンで Baidu Netdisk と Aliyun Drive にサインイン"
+          },
+          "detail": {
+            "en": "Add both drives in Settings → Cloud Drive Accounts, or sign in when a line asks: Yingxia shows a code to scan with the drive’s app, then plays the video.",
+            "zh-Hans": "可以在“设置 → 网盘账号”中添加这两个网盘，也可以在线路要求时登录：映匣会显示二维码，用对应的 App 扫码后即可播放。",
+            "zh-Hant": "可以在「設定 → 雲端硬碟帳號」中加入這兩個雲端硬碟，也可以在線路要求時登入：映匣會顯示 QR 碼，用對應的 App 掃碼後即可播放。",
+            "ja": "「設定 → クラウドドライブのアカウント」で両方を追加できます。回線がサインインを求めたときにも、映匣が表示するコードを各サービスの App でスキャンすれば再生が始まります。"
+          }
+        },
+        {
+          "symbol": "play.circle.fill",
+          "title": {
+            "en": "Fewer stuck videos",
+            "zh-Hans": "更少卡住",
+            "zh-Hant": "更少卡住",
+            "ja": "止まる動画が減りました"
+          },
+          "detail": {
+            "en": "Videos no longer hang on lines that need a sign-in, and MKV originals switch to a line that plays.",
+            "zh-Hans": "需要登录的线路不再卡住，MKV 原画会自动切换到可以播放的线路。",
+            "zh-Hant": "需要登入的線路不再卡住，MKV 原畫會自動切換到可以播放的線路。",
+            "ja": "サインインが必要な回線で動画が止まらなくなり、MKV のオリジナルは再生できる回線に切り替わります。"
+          }
+        }
+      ]
+    },
+    {
+      "version": "1.5.1",
+      "date": "2026-10-13",
+      "links": {
+        "macos": "https://download.getmegaportal.com/yingxia/1.5.1/Yingxia-1.5.1-macos-arm64.dmg",
+        "ios": "https://yingxia.getmegaportal.com/#install-ios",
+        "tvos": "https://yingxia.getmegaportal.com/#install-tv"
+      },
+      "features": [
+        {
+          "symbol": "gearshape.fill",
+          "title": {
+            "en": "Settings, redesigned",
+            "zh-Hans": "全新设置",
+            "zh-Hant": "全新設定",
+            "ja": "設定を一新"
+          },
+          "detail": {
+            "en": "On Apple TV, Settings looks like the TV’s own: the app on the left, a list on the right, and every row shows its current value. On iPhone, iPad and Mac it’s a native list, like the Settings app and System Settings. Each subscription now has its own page to switch it on or off, reorder or remove it.",
+            "zh-Hans": "在 Apple TV 上，设置与系统自带的设置一致：左边是应用，右边是列表，每一行都直接显示当前的值。在 iPhone、iPad 和 Mac 上，它是原生列表，与“设置”App 和“系统设置”一样。每个订阅都有自己的页面，可以开关、调整顺序或移除。",
+            "zh-Hant": "在 Apple TV 上，設定與系統內建的設定一致：左邊是 App，右邊是列表，每一列都直接顯示目前的值。在 iPhone、iPad 和 Mac 上，它是原生列表，與「設定」App 和「系統設定」一樣。每個訂閱都有自己的頁面，可以開關、調整順序或移除。",
+            "ja": "Apple TV の設定は本体の設定と同じ見た目になりました。左にアプリ、右にリストが並び、各項目に現在の値が表示されます。iPhone、iPad、Mac では「設定」App や「システム設定」と同じネイティブのリストです。配信設定ごとに専用のページがあり、オン／オフ、並べ替え、削除ができます。"
+          }
+        },
+        {
+          "symbol": "magnifyingglass",
+          "platforms": [
+            "tvos"
+          ],
+          "title": {
+            "en": "A Search button on Apple TV",
+            "zh-Hans": "Apple TV 上的搜索按钮",
+            "zh-Hant": "Apple TV 上的搜尋按鈕",
+            "ja": "Apple TV に検索ボタン"
+          },
+          "detail": {
+            "en": "On a source’s page and in Global Search, type with the on-screen keyboard, then select the button showing your words to search. Stop and Continue sit next to the results.",
+            "zh-Hans": "在点播源页面和全局搜索中，用屏幕键盘输入后，选择显示着搜索内容的按钮即可开始搜索。“停止”和“继续”就在结果旁边。",
+            "zh-Hant": "在隨選來源頁面和全域搜尋中，用螢幕鍵盤輸入後，選擇顯示著搜尋內容的按鈕即可開始搜尋。「停止」和「繼續」就在結果旁邊。",
+            "ja": "配信ソースのページと横断検索では、画面のキーボードで入力し、入力した語句が表示されたボタンを選ぶと検索が始まります。「停止」と「続ける」は結果の横にあります。"
+          }
+        },
+        {
+          "symbol": "paintpalette.fill",
+          "title": {
+            "en": "A calmer look",
+            "zh-Hans": "更沉静的外观",
+            "zh-Hant": "更沉靜的外觀",
+            "ja": "落ち着いたデザイン"
+          },
+          "detail": {
+            "en": "Buttons and selections are now white and black, like the Apple TV app, the backgrounds take the deep blue of the icon, and colour is left to the posters. Source filters no longer get cut off at the edges.",
+            "zh-Hans": "按钮和选中状态改为黑白两色，与 Apple TV App 一致；背景采用图标的深蓝色，色彩留给海报。点播源的筛选标签也不会再在边缘被截断。",
+            "zh-Hant": "按鈕和選取狀態改為黑白兩色，與 Apple TV App 一致；背景採用圖示的深藍色，色彩留給海報。隨選來源的篩選標籤也不會再在邊緣被截斷。",
+            "ja": "ボタンや選択中の項目は Apple TV App と同じく白と黒になり、背景はアイコンの深い青に。色はポスターに任せました。配信ソースの絞り込みが端で切れることもなくなりました。"
+          }
+        }
+      ]
+    },
+    {
+      "version": "1.5",
+      "date": "2026-10-13",
+      "links": {
+        "macos": "https://download.getmegaportal.com/yingxia/1.5/Yingxia-1.5-macos-arm64.dmg",
+        "ios": "https://yingxia.getmegaportal.com/#install-ios",
+        "tvos": "https://yingxia.getmegaportal.com/#install-tv"
+      },
+      "features": [
+        {
+          "symbol": "dot.radiowaves.left.and.right",
+          "title": {
+            "en": "Douyu, Huya and Douyin live, built in",
+            "zh-Hans": "内置斗鱼、虎牙和抖音直播",
+            "zh-Hant": "內建鬥魚、虎牙和抖音直播",
+            "ja": "Douyu、Huya、Douyin のライブを内蔵"
+          },
+          "detail": {
+            "en": "Live TV now has Douyu, Huya and Douyin next to Bilibili Live. Browse each platform’s categories, open a room, and switch its quality in the player. No subscription needed.",
+            "zh-Hans": "直播页在哔哩哔哩直播之外，新增斗鱼、虎牙和抖音。可按各平台的分区浏览、打开直播间，并在播放器中切换画质，无需订阅。",
+            "zh-Hant": "直播頁在嗶哩嗶哩直播之外，新增鬥魚、虎牙和抖音。可依各平台的分區瀏覽、打開直播間，並在播放器中切換畫質，免訂閱。",
+            "ja": "ライブ TV に、ビリビリ生配信に加えて Douyu、Huya、Douyin が加わりました。各プラットフォームのカテゴリを見て配信を開き、プレーヤーで画質を切り替えられます。配信設定は不要です。"
+          }
+        },
+        {
+          "symbol": "magnifyingglass",
+          "title": {
+            "en": "Search live rooms",
+            "zh-Hans": "搜索直播间",
+            "zh-Hant": "搜尋直播間",
+            "ja": "ライブ配信を検索"
+          },
+          "detail": {
+            "en": "Search one platform from its page, or search the Live tab to see matching rooms from every platform, followed by matching channels from your playlists.",
+            "zh-Hans": "可在单个平台页内搜索，也可在直播页搜索，一次看到各平台的匹配直播间，以及播放列表中的匹配频道。",
+            "zh-Hant": "可在單一平台頁內搜尋，也可在直播頁搜尋，一次看到各平台的符合直播間，以及播放清單中的符合頻道。",
+            "ja": "各プラットフォームのページで検索できるほか、ライブタブで検索すればすべてのプラットフォームの配信と、プレイリストのチャンネルをまとめて表示します。"
+          }
+        },
+        {
+          "symbol": "person.crop.circle.badge.checkmark",
+          "title": {
+            "en": "Sign in to Douyin",
+            "zh-Hans": "登录抖音",
+            "zh-Hant": "登入抖音",
+            "ja": "Douyin にサインイン"
+          },
+          "detail": {
+            "en": "Douyin only answers live searches for signed-in accounts. Sign in on Douyin’s own page on iPhone, iPad or Mac. On Apple TV, open Settings > Douyin and scan its code with your iPhone to send the sign-in over your Wi-Fi, encrypted.",
+            "zh-Hans": "抖音只为已登录账号提供直播搜索。在 iPhone、iPad 或 Mac 上可直接在抖音官方页面登录；在 Apple TV 上打开“设置 > 抖音”，用 iPhone 扫码，登录信息会加密后通过 Wi-Fi 发送到电视。",
+            "zh-Hant": "抖音只為已登入帳號提供直播搜尋。在 iPhone、iPad 或 Mac 上可直接在抖音官方頁面登入；在 Apple TV 上打開「設定 > 抖音」，用 iPhone 掃碼，登入資訊會加密後經 Wi-Fi 傳送到電視。",
+            "ja": "Douyin はサインイン中のアカウントにだけライブ検索を提供します。iPhone、iPad、Mac では Douyin のページでサインインできます。Apple TV では「設定 > Douyin」のコードを iPhone で読み取ると、サインインが暗号化されて Wi-Fi で届きます。"
+          }
+        },
+        {
+          "symbol": "square.stack.3d.up.fill",
+          "title": {
+            "en": "Several subscriptions at once",
+            "zh-Hans": "同时使用多个订阅",
+            "zh-Hant": "同時使用多個訂閱",
+            "ja": "複数の配信設定を同時に"
+          },
+          "detail": {
+            "en": "Add more than one subscription and their sources merge into one list. An address that lists several subscriptions (多仓) adds each of them switched off, so you can choose. A subscription that fails to refresh keeps its last working copy.",
+            "zh-Hans": "可以添加多个订阅，它们的片源会合并成一个列表。多仓地址会把其中的每个订阅都添加为关闭状态，由你自己挑选。刷新失败的订阅会继续使用上一次可用的内容。",
+            "zh-Hant": "可以加入多個訂閱，它們的片源會合併成一個清單。多倉網址會把其中的每個訂閱都加入為關閉狀態，由你自己挑選。更新失敗的訂閱會繼續使用上一次可用的內容。",
+            "ja": "配信設定を複数追加すると、そのソースが 1 つのリストにまとまります。複数の配信設定をまとめたアドレス（多仓）は、それぞれをオフの状態で追加するので、使うものを選べます。更新に失敗した配信設定は、最後に動いた内容を使い続けます。"
+          }
+        },
+        {
+          "symbol": "stethoscope",
+          "title": {
+            "en": "Failing sources wait their turn",
+            "zh-Hans": "失效片源排到后面",
+            "zh-Hant": "失效片源排到後面",
+            "ja": "不調なソースは後回しに"
+          },
+          "detail": {
+            "en": "Sources that keep failing are marked in the source lists and searched after the others, until they answer again.",
+            "zh-Hans": "一直失败的片源会在片源列表中标出，并在其他片源之后才搜索，直到它恢复响应。",
+            "zh-Hant": "一直失敗的片源會在片源清單中標出，並在其他片源之後才搜尋，直到它恢復回應。",
+            "ja": "失敗が続くソースはソース一覧で印が付き、再び応答するまでほかのソースの後に検索されます。"
+          }
+        },
+        {
+          "symbol": "externaldrive.fill.badge.icloud",
+          "title": {
+            "en": "Every cloud drive plays directly",
+            "zh-Hans": "网盘视频直接播放",
+            "zh-Hant": "網盤影片直接播放",
+            "ja": "どのクラウドドライブも直接再生"
+          },
+          "detail": {
+            "en": "Cloud-drive videos from more sources now stream straight from the drive’s servers, and downloads do too. Cloud Drive Accounts in Settings is now on iPhone, iPad and Apple TV as well, with QR sign-in.",
+            "zh-Hans": "更多片源的网盘视频现在直接从网盘服务器串流，下载也是。“设置”中的“网盘账号”也来到了 iPhone、iPad 和 Apple TV，可扫码登录。",
+            "zh-Hant": "更多片源的網盤影片現在直接從網盤伺服器串流，下載也是。「設定」中的「網盤帳號」也來到了 iPhone、iPad 和 Apple TV，可掃碼登入。",
+            "ja": "より多くのソースのクラウドドライブ動画がドライブのサーバーから直接ストリーミングされ、ダウンロードも同様になりました。設定の「クラウドドライブのアカウント」が iPhone、iPad、Apple TV にも加わり、QR コードでログインできます。"
+          }
+        },
+        {
+          "symbol": "arrow.uturn.backward",
+          "platforms": [
+            "tvos"
+          ],
+          "title": {
+            "en": "Back from sign-in pages",
+            "zh-Hans": "登录页也能返回",
+            "zh-Hant": "登入頁也能返回",
+            "ja": "サインイン画面から戻れる"
+          },
+          "detail": {
+            "en": "Pressing Back on the Siri Remote while a Bilibili or Douyin sign-in code is showing now returns to Settings instead of leaving the app.",
+            "zh-Hans": "显示哔哩哔哩或抖音登录二维码时按 Siri Remote 的返回键，现在会回到“设置”，而不是退出应用。",
+            "zh-Hant": "顯示嗶哩嗶哩或抖音登入條碼時按 Siri Remote 的返回鍵，現在會回到「設定」，而不是離開 App。",
+            "ja": "ビリビリや Douyin のサインインコードを表示しているあいだに Siri Remote の戻るボタンを押すと、アプリを終了せず設定に戻るようになりました。"
+          }
+        }
+      ]
+    },
+    {
+      "version": "1.3",
+      "date": "2026-10-13",
+      "links": {
+        "macos": "https://download.getmegaportal.com/yingxia/1.3/Yingxia-1.3-macos-arm64.dmg",
+        "ios": "https://yingxia.getmegaportal.com/#install-ios",
+        "tvos": "https://yingxia.getmegaportal.com/#install-tv"
+      },
+      "features": [
+        {
+          "symbol": "play.rectangle.on.rectangle.fill",
+          "title": {
+            "en": "Hongguo short dramas, built in",
+            "zh-Hans": "内置红果短剧",
+            "zh-Hant": "內建紅果短劇",
+            "ja": "Hongguo のショートドラマを内蔵"
+          },
+          "detail": {
+            "en": "Live-action, animated and AI dramas from Hongguo, plus the trending charts, with every episode of each series. Episodes stream as you watch, and no subscription is needed.",
+            "zh-Hans": "红果的真人剧、漫剧、AI 剧和热播榜，每部剧集数齐全，边看边播放，无需订阅。",
+            "zh-Hant": "紅果的真人劇、漫劇、AI 劇和熱播榜，每部劇集數齊全，邊看邊播放，免訂閱。",
+            "ja": "Hongguo の実写・アニメ・AI ドラマと人気ランキングを、各シリーズの全エピソードとともに。観ながらストリーミングし、配信設定は不要です。"
+          }
+        },
+        {
+          "symbol": "externaldrive.fill.badge.icloud",
+          "title": {
+            "en": "Big cloud-drive videos play smoothly",
+            "zh-Hans": "网盘大文件流畅播放",
+            "zh-Hant": "網盤大檔案流暢播放",
+            "ja": "大きなクラウドドライブの動画も滑らかに"
+          },
+          "detail": {
+            "en": "Quark and other cloud-drive files now stream straight from the drive over several connections, so 4K episodes of 2 GB play without stalling. Files with the wrong extension, such as a video named .mp3, play too.",
+            "zh-Hans": "夸克等网盘文件现在直接从网盘多线程串流，2 GB 的 4K 剧集也不再卡住。扩展名不对的文件（例如命名为 .mp3 的视频）也能播放。",
+            "zh-Hant": "夸克等網盤檔案現在直接從網盤多線程串流，2 GB 的 4K 劇集也不再卡住。副檔名不對的檔案（例如命名為 .mp3 的影片）也能播放。",
+            "ja": "Quark などのクラウドドライブのファイルを、複数の接続でドライブから直接ストリーミングするようになり、 2 GB の 4K エピソードも止まらず再生できます。 .mp3 という名前の動画など、拡張子が正しくないファイルも再生できます。"
+          }
+        },
+        {
+          "symbol": "square.grid.3x3.fill",
+          "title": {
+            "en": "Sources, laid out like apps",
+            "zh-Hans": "片源像 App 一样排列",
+            "zh-Hant": "片源像 App 一樣排列",
+            "ja": "ソースをアプリのように"
+          },
+          "detail": {
+            "en": "Each source is now a tile with its own icon, and taglines such as 秒播 sit on a second line. Built-in sources come first.",
+            "zh-Hans": "每个片源都是带图标的方块，「秒播」等标签显示在第二行，内置片源排在最前。",
+            "zh-Hant": "每個片源都是帶圖示的方塊，「秒播」等標籤顯示在第二行，內建片源排在最前。",
+            "ja": "各ソースがアイコン付きのタイルになり、「秒播」などのタグは 2 行目に表示されます。内蔵ソースが先頭に並びます。"
+          }
+        },
+        {
+          "symbol": "qrcode.viewfinder",
+          "title": {
+            "en": "Scan to sign in to cloud drives",
+            "zh-Hans": "扫码登录网盘",
+            "zh-Hant": "掃碼登入網盤",
+            "ja": "QR コードでクラウドドライブにログイン"
+          },
+          "detail": {
+            "en": "When a source needs Quark or UC, Yingxia shows its own QR code instead of failing, and keeps the sign-in so cloud-drive videos play. They also keep playing after the app returns from the background.",
+            "zh-Hans": "片源需要夸克或 UC 网盘时，映匣会显示自己的二维码，登录后网盘视频即可播放；应用从后台返回后也能继续播放。",
+            "zh-Hant": "片源需要夸克或 UC 網盤時，映匣會顯示自己的 QR 碼，登入後網盤影片即可播放；App 從背景返回後也能繼續播放。",
+            "ja": "ソースが Quark や UC を必要とするとき、映匣が独自の QR コードを表示し、ログイン後はクラウドドライブの動画を再生できます。バックグラウンドから戻った後も再生を続けます。"
+          }
+        },
+        {
+          "symbol": "magnifyingglass",
+          "platforms": [
+            "tvos"
+          ],
+          "title": {
+            "en": "Search when you’re ready",
+            "zh-Hans": "输入完再搜索",
+            "zh-Hant": "輸入完再搜尋",
+            "ja": "入力し終えてから検索"
+          },
+          "detail": {
+            "en": "Typing or dictating no longer starts a search after every pause. Press Search when your query is ready, and loading more results no longer asks every source at once.",
+            "zh-Hans": "输入或听写时不再一停顿就开始搜索。输入好后按「搜索」即可，加载更多结果时也不再同时请求所有片源。",
+            "zh-Hant": "輸入或聽寫時不再一停頓就開始搜尋。輸入好後按「搜尋」即可，載入更多結果時也不再同時請求所有片源。",
+            "ja": "入力や音声入力の途中で検索が始まらなくなりました。入力し終えたら「検索」を押してください。結果の追加読み込みも、すべてのソースへ一斉に問い合わせなくなりました。"
+          }
+        },
+        {
+          "symbol": "arrow.uturn.backward",
+          "platforms": [
+            "tvos"
+          ],
+          "title": {
+            "en": "Back while a video page loads",
+            "zh-Hans": "加载时也能返回",
+            "zh-Hant": "載入時也能返回",
+            "ja": "読み込み中でも戻れる"
+          },
+          "detail": {
+            "en": "Pressing Back on the Siri Remote while a video’s details are still loading now returns to the previous page instead of leaving the app.",
+            "zh-Hans": "视频详情还在加载时按 Siri Remote 的返回键，现在会回到上一页，而不是退出应用。",
+            "zh-Hant": "影片詳情還在載入時按 Siri Remote 的返回鍵，現在會回到上一頁，而不是離開 App。",
+            "ja": "動画の詳細を読み込んでいるあいだに Siri Remote の戻るボタンを押すと、アプリを終了せず前のページに戻るようになりました。"
+          }
+        }
+      ]
+    },
+    {
+      "version": "1.2.2",
+      "date": "2026-10-12",
+      "links": {
+        "ios": "https://yingxia.getmegaportal.com/#install-ios",
+        "tvos": "https://yingxia.getmegaportal.com/#install-tv"
+      },
+      "features": [
+        {
+          "symbol": "arrow.down.app.fill",
+          "platforms": [
+            "ios",
+            "tvos"
+          ],
+          "title": {
+            "en": "Installs with SideStore",
+            "zh-Hans": "支持用 SideStore 安装",
+            "zh-Hant": "支援用 SideStore 安裝",
+            "ja": "SideStore でインストール可能に"
+          },
+          "detail": {
+            "en": "Fixes the “FAT slice bounds” error when installing with SideStore. The app now holds far fewer files, so sideloading is also much faster.",
+            "zh-Hans": "修复用 SideStore 安装时出现的「FAT slice bounds」错误。应用内的文件大幅减少，侧载安装也快了很多。",
+            "zh-Hant": "修正用 SideStore 安裝時出現的「FAT slice bounds」錯誤。App 內的檔案大幅減少，側載安裝也快了很多。",
+            "ja": "SideStore でインストールするときの「FAT slice bounds」エラーを修正しました。アプリ内のファイル数が大幅に減り、サイドロードもずっと速くなりました。"
+          }
+        }
+      ]
+    },
+    {
       "version": "1.2.1",
       "date": "2026-10-12",
       "links": {

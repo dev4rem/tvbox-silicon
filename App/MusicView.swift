@@ -1,0 +1,363 @@
+import SwiftUI
+import TVCore
+
+/// Music: search songs, albums or playlists by name (and artist), and play from the best channel
+/// found. With no search, the page offers to continue where listening stopped and lists what
+/// played recently.
+struct MusicView: View {
+    @Environment(Store.self) private var store
+    @State private var query = ""
+    /// The query Return was pressed for: its direct hit plays once the search knows it. Typing
+    /// something else clears it.
+    @State private var autoPlayQuery: String?
+    @State private var showsSettings = false
+    #if DEBUG
+    /// `-qaMusicOpen 1` opens the first album or playlist found, for screenshots.
+    @State private var qaOpened: MusicCollection?
+    #endif
+
+    var body: some View {
+        let search = store.musicSearch
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: MusicLayout.rowSpacing) {
+                #if os(tvOS)
+                let typed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !typed.isEmpty, typed != search.query {
+                    SearchQueryButton(query: typed) { search.search(typed, immediately: true) }
+                        .padding(.bottom, 12)
+                } else if typed.isEmpty {
+                    MusicNowPlayingButton()
+                }
+                #endif
+                if !search.query.isEmpty { kinds(search) }
+                content(search)
+            }
+            .glassRowInsets()
+            .pageContainer()
+        }
+        .screenBackdrop()
+        .catalogSearchable(text: $query, prompt: L10n.text("Song, album or playlist"))
+        .onChange(of: query) { _, text in
+            if text.trimmingCharacters(in: .whitespacesAndNewlines) != autoPlayQuery { autoPlayQuery = nil }
+            #if os(tvOS)
+            // As in Global Search: typing only edits the query, and results change when it is
+            // submitted. Results replaced under the keyboard took focus away from the letters.
+            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { search.clear() }
+            #else
+            search.search(text)
+            #endif
+        }
+        .onSubmit(of: .search) {
+            autoPlayQuery = search.kind == .songs ? query.trimmingCharacters(in: .whitespacesAndNewlines) : nil
+            search.search(query, immediately: true); playDirectHitIfReady()
+        }
+        .onChange(of: search.busy) {
+            playDirectHitIfReady()
+            #if DEBUG
+            if !search.busy, UserDefaults.standard.bool(forKey: "qaMusicOpen"), qaOpened == nil { qaOpened = search.collections.first }
+            #endif
+        }
+        #if DEBUG
+        .navigationDestination(item: $qaOpened) { MusicCollectionView(collection: $0) }
+        #endif
+        .musicPlayerInset()
+        #if os(tvOS)
+        .onPlayPauseCommand { store.music.toggle() }
+        #endif
+        .tabTitle(L10n.text("Music"))
+        #if !os(tvOS)
+        .toolbar {
+            Button { showsSettings = true } label: { Image(systemName: "slider.horizontal.3") }
+                .accessibilityLabel(L10n.text("Music Settings"))
+        }
+        #endif
+        .sheet(isPresented: $showsSettings) { MusicSettingsView() }
+        .task {
+            if query.isEmpty, !search.query.isEmpty { query = search.query }
+            #if DEBUG
+            // `-qaSection music -qaQuery <text> [-qaMusicKind albums] [-qaMusicPlay 1]` searches, and plays the direct hit.
+            if query.isEmpty, let text = UserDefaults.standard.string(forKey: "qaQuery") {
+                if UserDefaults.standard.bool(forKey: "qaMusicPlay") { autoPlayQuery = text }
+                query = text
+                search.search(text, kind: UserDefaults.standard.string(forKey: "qaMusicKind").flatMap(MusicSearchKind.init(rawValue:)), immediately: true)
+            }
+            #endif
+        }
+    }
+
+    private func playDirectHitIfReady() {
+        let search = store.musicSearch
+        guard let wanted = autoPlayQuery, wanted == search.query, !search.busy else { return }
+        autoPlayQuery = nil
+        if let hit = search.directHit, store.music.track?.id != hit.id { store.music.play(hit) }
+    }
+
+    private func kinds(_ search: MusicSearchModel) -> some View {
+        ChipRow {
+            GlassGroup(spacing: 8) {
+                HStack(spacing: 8) {
+                    ForEach(MusicSearchKind.allCases, id: \.self) { kind in
+                        Chip(title: kind.name, selected: search.kind == kind) { search.search(query, kind: kind, immediately: true) }
+                    }
+                }
+            }.padding(.vertical, 4)
+        }
+        .padding(.bottom, 8)
+        .tvFocusSection()
+    }
+
+    @ViewBuilder private func content(_ search: MusicSearchModel) -> some View {
+        if search.query.isEmpty {
+            MusicHome { showsSettings = true }
+        } else if search.results.isEmpty && search.collections.isEmpty && search.busy {
+            ProgressView().frame(maxWidth: .infinity).padding(.vertical, 80)
+        } else if search.failed {
+            ErrorStateCard(title: L10n.text("Unable to Search Music"), message: L10n.text("Check your network connection and try again."),
+                           details: failureDetails(search), retry: { search.search(query, immediately: true) }, busy: search.busy)
+                .padding(.vertical, 24).tvFocusSection()
+        } else if search.empty {
+            ContentUnavailableView(L10n.text("No Matching Songs"), systemImage: "music.note",
+                                   description: Text(L10n.text("Try the song's full name, or add the artist.")))
+                .frame(maxWidth: .infinity).padding(.vertical, 60)
+        } else {
+            ForEach(search.failures.keys.sorted { $0.rawValue < $1.rawValue }, id: \.self) { platform in
+                StatusNotice(text: L10n.text("%@ didn't answer, so these results are from the other catalog.", platform.name))
+                    .padding(.bottom, 10)
+            }
+            if search.kind == .songs {
+                ForEach(search.results) { track in MusicTrackRow(track: track) { store.music.play(track) } }
+            } else {
+                ForEach(search.collections) { collection in MusicCollectionRow(collection: collection) }
+            }
+        }
+    }
+
+    private func failureDetails(_ search: MusicSearchModel) -> String {
+        search.failures.map { "\($0.key.name): \($0.value.localizedDescription) (\($0.value.detail))" }.sorted().joined(separator: "\n")
+    }
+}
+
+enum MusicLayout {
+    #if os(tvOS)
+    static let rowSpacing: CGFloat = 8, art: CGFloat = 76, gap: CGFloat = 22, header: CGFloat = 260
+    #else
+    static let rowSpacing: CGFloat = 2, art: CGFloat = 48, gap: CGFloat = 14, header: CGFloat = 150
+    #endif
+}
+
+/// The Music page with nothing searched: continue listening, and what played recently.
+private struct MusicHome: View {
+    @Environment(Store.self) private var store
+    let openSettings: () -> Void
+
+    var body: some View {
+        let library = store.music.library
+        let resumable = store.music.track == nil ? library.resumePoint : nil
+        if let point = resumable, let track = point.queue.current {
+            MusicContinueCard(point: point, track: track).padding(.bottom, 20)
+        }
+        if !library.history.isEmpty {
+            HStack {
+                SectionHeader(title: L10n.text("Recently Played"))
+                Spacer()
+                Button(L10n.text("Clear")) { library.clearHistory() }.controlButton()
+            }
+            .padding(.bottom, 8)
+            .tvFocusSection()
+            ForEach(library.history.prefix(100)) { entry in
+                if let collection = entry.collection {
+                    MusicCollectionRow(collection: collection)
+                } else if let track = entry.track {
+                    MusicTrackRow(track: track) { store.music.play(track) }
+                }
+            }
+        } else if resumable == nil {
+            EmptyPage(symbol: "music.note", title: L10n.text("Search for a Song"),
+                      message: L10n.text("Type a song's name, or its name and the artist. Yingxia finds the recording and plays it from the best channel available, lossless first."),
+                      action: L10n.text("Music Settings"), actionSymbol: "slider.horizontal.3", perform: openSettings)
+                .frame(minHeight: 420)
+        }
+    }
+}
+
+private struct MusicContinueCard: View {
+    @Environment(Store.self) private var store
+    let point: MusicResumePoint
+    let track: MusicTrack
+
+    var body: some View {
+        Button { store.music.resume() } label: {
+            HStack(spacing: MusicLayout.gap) {
+                PosterImage(url: track.artwork, symbol: "music.note")
+                    .frame(width: MusicLayout.art * 1.4, height: MusicLayout.art * 1.4)
+                    .clipShape(RoundedRectangle(cornerRadius: MusicLayout.art * 0.2, style: .continuous))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(L10n.text("Continue Playing")).font(.caption.weight(.semibold)).foregroundStyle(Brand.accent)
+                    Text(track.title).font(.headline).lineLimit(1)
+                    Text([track.artistLine, point.queue.source, L10n.text("Stopped at %@", MusicTime.text(point.position))]
+                        .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "play.circle.fill").font(.system(size: MusicLayout.art * 0.6)).foregroundStyle(Brand.accent)
+            }
+            .padding(14)
+            .contentPanel(cornerRadius: 20)
+            .contentShape(Rectangle())
+        }
+        .cardButton()
+    }
+}
+
+struct MusicTrackRow: View {
+    @Environment(Store.self) private var store
+    let track: MusicTrack
+    /// Its place in an album or playlist, shown instead of the cover.
+    var number: Int?
+    let action: () -> Void
+
+    var body: some View {
+        let current = store.music.track?.id == track.id
+        Button(action: action) {
+            HStack(spacing: MusicLayout.gap) {
+                if let number {
+                    Text("\(number)").font(.subheadline).monospacedDigit().foregroundStyle(.secondary)
+                        .frame(width: MusicLayout.art * 0.6, alignment: .trailing)
+                } else {
+                    PosterImage(url: track.artwork, symbol: "music.note")
+                        .frame(width: MusicLayout.art, height: MusicLayout.art)
+                        .clipShape(RoundedRectangle(cornerRadius: MusicLayout.art * 0.16, style: .continuous))
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(track.title).font(.headline).lineLimit(1)
+                        .foregroundStyle(current ? AnyShapeStyle(Brand.accent) : AnyShapeStyle(.primary))
+                    Text([track.artistLine, number == nil ? track.album : nil].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                ForEach(track.tags.sorted(), id: \.self) { tag in Pill(text: tag.name) }
+                if current { MusicActivityMark() }
+                if let duration = track.duration {
+                    Text(MusicTime.text(duration)).font(.subheadline).monospacedDigit().foregroundStyle(.secondary)
+                }
+            }
+            .padding(.vertical, number == nil ? 6 : 10)
+            .contentShape(Rectangle())
+        }
+        .glassRow()
+        .accessibilityLabel(Text([track.title, track.artistLine].joined(separator: ", ")))
+    }
+}
+
+private struct MusicCollectionRow: View {
+    let collection: MusicCollection
+
+    var body: some View {
+        RouteLink {
+            MusicCollectionView(collection: collection)
+        } label: {
+            HStack(spacing: MusicLayout.gap) {
+                PosterImage(url: collection.artwork, symbol: collection.kind == .album ? "square.stack" : "music.note.list")
+                    .frame(width: MusicLayout.art * 1.2, height: MusicLayout.art * 1.2)
+                    .clipShape(RoundedRectangle(cornerRadius: MusicLayout.art * 0.18, style: .continuous))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(collection.title).font(.headline).lineLimit(1).foregroundStyle(.primary)
+                    Text(MusicCollectionView.details(collection)).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right").font(.subheadline.weight(.semibold)).foregroundStyle(.tertiary)
+            }
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .glassRow()
+    }
+}
+
+/// An album or playlist: its tracks, Play and Shuffle. Playing a track queues the whole list from it.
+struct MusicCollectionView: View {
+    let collection: MusicCollection
+    @Environment(Store.self) private var store
+    @State private var tracks: [MusicTrack] = []
+    @State private var loading = false
+    @State private var error: String?
+
+    static func details(_ collection: MusicCollection) -> String {
+        [collection.subtitle, collection.trackCount.map { L10n.text("%lld songs", $0) }, collection.year, collection.platform.name]
+            .compactMap { $0 }.joined(separator: " · ")
+    }
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: MusicLayout.rowSpacing) {
+                #if os(tvOS)
+                MusicNowPlayingButton()
+                #endif
+                header.padding(.bottom, 24)
+                if loading && tracks.isEmpty { ProgressView().frame(maxWidth: .infinity).padding(.vertical, 60) }
+                if let error {
+                    ErrorStateCard(title: L10n.text("Unable to Load Songs"), message: L10n.text("Check your network connection and try again."),
+                                   details: error, retry: { Task { await load() } }, busy: loading)
+                        .padding(.vertical, 24).tvFocusSection()
+                }
+                ForEach(Array(tracks.enumerated()), id: \.offset) { index, track in
+                    MusicTrackRow(track: track, number: index + 1) {
+                        store.music.play(MusicQueue(tracks: tracks, start: index, collection: collection))
+                    }
+                }
+            }
+            .glassRowInsets()
+            .pageContainer()
+        }
+        .screenBackdrop()
+        .screenTitle(collection.title)
+        .musicPlayerInset()
+        #if os(tvOS)
+        .onPlayPauseCommand { store.music.toggle() }
+        #endif
+        .task {
+            if tracks.isEmpty { await load() }
+            #if DEBUG
+            if UserDefaults.standard.bool(forKey: "qaMusicPlay"), store.music.track == nil, !tracks.isEmpty {
+                store.music.play(MusicQueue(tracks: tracks, collection: collection))
+            }
+            #endif
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .center, spacing: MusicLayout.gap * 1.4) {
+                PosterImage(url: collection.artwork, symbol: collection.kind == .album ? "square.stack" : "music.note.list")
+                    .frame(width: MusicLayout.header, height: MusicLayout.header)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(L10n.text(collection.kind == .album ? "Album" : "Playlist")).font(.caption.weight(.semibold)).foregroundStyle(Brand.accent)
+                    Text(collection.title).font(.title2.weight(.bold)).lineLimit(2)
+                    Text(Self.details(collection)).font(.subheadline).foregroundStyle(.secondary).lineLimit(3)
+                }
+            }
+            HStack(spacing: 10) {
+                    Button { store.music.play(MusicQueue(tracks: tracks, collection: collection)) } label: {
+                        Label(L10n.text("Play"), systemImage: "play.fill")
+                    }
+                    .controlButton(prominent: true)
+                    Button { store.music.play(MusicQueue.shuffled(tracks, collection: collection)) } label: {
+                        Label(L10n.text("Shuffle"), systemImage: "shuffle")
+                    }
+                    .controlButton()
+            }
+            .fixedSize()
+            .disabled(tracks.isEmpty)
+        }
+        .tvFocusSection()
+    }
+
+    private func load() async {
+        guard let source = store.musicSearch.source(for: collection.platform) else { return }
+        loading = true; error = nil
+        defer { loading = false }
+        do { tracks = try await source.tracks(of: collection) }
+        catch { self.error = MusicProviderError(error).localizedDescription + " (" + MusicProviderError(error).detail + ")" }
+    }
+}

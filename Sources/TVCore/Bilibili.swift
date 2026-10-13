@@ -21,11 +21,14 @@ extension Site {
         return Site(key: Bilibili.siteKey, name: name, type: 3, api: "csp_Bili", raw: raw)
     }()
     /// A source the app provides itself; it never falls back to a subscription's JAR.
-    public var isBuiltIn: Bool { key == Bilibili.siteKey }
-    /// The port's configuration: built-in mode with the signed-in account, read on every request so
-    /// signing in or out reaches the next one (a changed ext starts a new script session).
+    public var isBuiltIn: Bool { isBilibili || key == Hongguo.siteKey }
+    public var isBilibili: Bool { key == Bilibili.siteKey }
+    public static var builtInSites: [Site] { [.bilibili, .hongguo] }
+    /// Per-source bundled configuration. Bilibili reads the account on each request so login
+    /// changes start a new session; Hongguo receives localized labels without account cookies.
     var builtInExtension: JSONValue {
-        .object(["builtin": .bool(true), "cookie": .string(BilibiliAccount.load().cookie)])
+        if key == Hongguo.siteKey { return Hongguo.configuration }
+        return .object(["builtin": .bool(true), "cookie": .string(BilibiliAccount.load().cookie)])
     }
 }
 
@@ -33,8 +36,8 @@ extension Subscription {
     /// The subscription's sources and live playlists plus the built-in ones; the app shows this, the
     /// document keeps only its own.
     public func withBuiltInSites() -> Subscription {
-        let sites = self.sites.contains(where: \.isBuiltIn) ? self.sites : self.sites + [.bilibili]
-        let lives = self.lives.contains(where: \.isBuiltIn) ? self.lives : [.bilibili] + self.lives
+        let sites = self.sites + Site.builtInSites.filter { builtin in !self.sites.contains { $0.key == builtin.key } }
+        let lives = LiveSource.builtIn.filter { builtin in !self.lives.contains { $0.url == builtin.url } } + self.lives
         return Subscription(origin: origin, importedAt: importedAt, sites: sites, lives: lives, raw: raw)
     }
 }

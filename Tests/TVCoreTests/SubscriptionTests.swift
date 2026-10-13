@@ -17,6 +17,13 @@ import Testing
     #expect(components.percentEncodedPath == "/%E4%B8%AD%2F%E6%96%87")
     #expect(components.queryItems?.map(\.value) == ["%26", "100%", "hello+world"])
     #expect(try WebAddress.resolve("http://[::1]:8080/中文").port == 8080)
+    let media = try WebAddress.resolve("http://127.0.0.1:8080/play/夸父盘/[ANi] 你好%20[1080P].mp4")
+    #expect(media.path == "/play/夸父盘/[ANi] 你好 [1080P].mp4")
+    #expect(!media.absoluteString.contains("%25"))
+    #expect(try WebAddress.resolve(media.absoluteString) == media)
+    let ipv6Media = try WebAddress.resolve("http://[::1]:8080/[字幕] 你好.mp4")
+    #expect(ipv6Media.port == 8080)
+    #expect(ipv6Media.path == "/[字幕] 你好.mp4")
 }
 
 @Test func subscriptionCommentsPreserveURLsEscapesAndOpaqueValues() throws {

@@ -59,7 +59,13 @@ char *TVAppleRuntimeRequest(const char *resourcePath, const char *requestJSON) {
             NSString *cache = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject;
             NSString *log = [cache stringByAppendingPathComponent:@"embedded-jvm.log"];
             NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:log error:NULL];
-            freopen(log.UTF8String, [attributes fileSize] > 2 * 1024 * 1024 ? "w" : "a", stderr);
+            // Keep the previous log when starting a new one: it holds the last hang or crash.
+            if ([attributes fileSize] > 2 * 1024 * 1024) {
+                NSString *previous = [cache stringByAppendingPathComponent:@"embedded-jvm.previous.log"];
+                [[NSFileManager defaultManager] removeItemAtPath:previous error:NULL];
+                [[NSFileManager defaultManager] moveItemAtPath:log toPath:previous error:NULL];
+            }
+            freopen(log.UTF8String, "a", stderr);
             setbuf(stderr, NULL);
             fprintf(stderr, "Starting on-device Java runtime\n");
             NSString *host = [root stringByAppendingPathComponent:@"JavaHost"];
@@ -75,6 +81,8 @@ char *TVAppleRuntimeRequest(const char *resourcePath, const char *requestJSON) {
                 @"--add-opens=java.base/java.lang=ALL-UNNAMED", @"--add-opens=java.base/sun.net.www.protocol.jar=ALL-UNNAMED",
                 @"--enable-native-access=ALL-UNNAMED",
                 @"-Dorg.slf4j.simpleLogger.defaultLogLevel=error",
+                // The log names Chinese lines and times; without these it shows "????" and UTC.
+                @"-Dstderr.encoding=UTF-8", [@"-Duser.timezone=" stringByAppendingString:NSTimeZone.localTimeZone.name],
                 [@"-Djava.home=" stringByAppendingString:[root stringByAppendingPathComponent:@"lib"]],
                 [@"-Djava.class.path=" stringByAppendingString:classpath],
                 [@"-Djava.io.tmpdir=" stringByAppendingString:NSTemporaryDirectory()]];

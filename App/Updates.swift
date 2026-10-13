@@ -195,11 +195,7 @@ struct ReleaseNotesView: View {
     private var hero: some View {
         VStack(alignment: .leading, spacing: Size.heroSpacing) {
             HStack(spacing: Size.markGap) {
-                Image(systemName: "play.tv.fill")
-                    .font(.system(size: Size.mark * 0.5, weight: .bold)).foregroundStyle(.white)
-                    .frame(width: Size.mark, height: Size.mark)
-                    .background(LinearGradient(colors: ReleaseArt.palettes[0], startPoint: .topLeading, endPoint: .bottomTrailing),
-                                in: RoundedRectangle(cornerRadius: Size.mark * 0.26, style: .continuous))
+                AppMark(size: Size.mark)
                 // Letter-spaced capitals read as a label in Latin scripts; CJK stays unspaced.
                 Text(eyebrow).font(.system(size: Size.eyebrow, weight: .semibold)).tracking(L10n.resolvedLanguage() == "en" ? 1.2 : 0)
                     .textCase(.uppercase).foregroundStyle(.white.opacity(0.8))
@@ -257,18 +253,18 @@ struct ReleaseNotesView: View {
     }
 
     #if os(iOS)
-    /// On a phone the features stack like an episode list: artwork left, words right.
+    /// On a phone each feature is a card as wide as the screen, artwork on top and the words under
+    /// it, like the shelf cards elsewhere; artwork beside the text squeezed both.
     private var featureList: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 30) {
             ForEach(Array(features.enumerated()), id: \.element) { index, feature in
-                HStack(alignment: .center, spacing: 14) {
-                    ReleaseArt(symbol: feature.symbol, index: index).frame(width: 136)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(feature.title.text()).font(.system(size: Size.cardTitle, weight: .semibold))
-                        Text(feature.detail.text()).font(.system(size: Size.cardDetail)).foregroundStyle(.white.opacity(0.6))
+                VStack(alignment: .leading, spacing: Size.captionGap) {
+                    ReleaseArt(symbol: feature.symbol, index: index)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(feature.title.text()).font(.system(size: Size.cardTitle + 1, weight: .semibold))
+                        Text(feature.detail.text()).font(.system(size: Size.cardDetail)).foregroundStyle(.white.opacity(0.62))
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .accessibilityElement(children: .combine)
             }
@@ -378,7 +374,8 @@ private struct ReleaseArt: View {
     }
 }
 
-/// Slowly drifting brand colours that fade into black, like the Apple TV app's hero glow.
+/// Slowly drifting colours from the icon (cyan, blue, indigo) that fade into black, like the Apple
+/// TV app's hero glow.
 private struct ReleaseBackdrop: View {
     var animated: Bool
     var body: some View {
@@ -389,8 +386,8 @@ private struct ReleaseBackdrop: View {
                 [0, 0.5], [0.5 + drift, 0.42 - drift / 2], [1, 0.5],
                 [0, 1], [0.5, 1], [1, 1],
             ], colors: [
-                Color(red: 0.95, green: 0.48, blue: 0.20), Color(red: 0.70, green: 0.16, blue: 0.30), Color(red: 0.24, green: 0.10, blue: 0.42),
-                Color(red: 0.48, green: 0.16, blue: 0.10), Color(red: 0.36, green: 0.08, blue: 0.20), Color(red: 0.10, green: 0.06, blue: 0.22),
+                Color(red: 0.16, green: 0.62, blue: 0.98), Color(red: 0.10, green: 0.30, blue: 0.86), Color(red: 0.20, green: 0.12, blue: 0.56),
+                Color(red: 0.04, green: 0.22, blue: 0.46), Color(red: 0.06, green: 0.12, blue: 0.38), Color(red: 0.06, green: 0.05, blue: 0.22),
                 .black, .black, .black,
             ])
         }
@@ -423,51 +420,6 @@ private struct PillButtonStyle: ButtonStyle {
 #endif
 
 // MARK: Settings
-
-/// The update group in Settings: an invitation when a release is waiting, otherwise status and a check.
-struct UpdateSettingsGroup: View {
-    @Environment(Updates.self) private var updates
-    var body: some View {
-        SettingsGroup(title: L10n.text("Software Update")) {
-            if let latest = updates.available.first {
-                row(action: updates.show) {
-                    SettingsRow(symbol: "gift.fill", tint: Brand.accent, title: L10n.text("Yingxia %@ is available", latest.version),
-                                subtitle: L10n.text("New features are waiting for you.")) {
-                        HStack(spacing: 10) { NewBadge(); chevron }
-                    }
-                }
-            } else {
-                SettingsRow(symbol: "checkmark.circle.fill", tint: .green, title: L10n.text("Yingxia is up to date"),
-                            subtitle: updates.lastChecked.map { L10n.text("Last checked %@", $0.formatted(date: .abbreviated, time: .shortened)) }) {
-                    Button { Task { await updates.check(manual: true) } } label: {
-                        HStack(spacing: 6) {
-                            if updates.checking { ProgressView().controlSize(.mini) }
-                            Text(L10n.text(updates.checking ? "Checking…" : "Check Now"))
-                        }
-                    }
-                    .settingsButton().disabled(updates.checking)
-                }
-            }
-            if !updates.currentNotes.isEmpty {
-                row(action: updates.showCurrentNotes) {
-                    SettingsRow(symbol: "sparkles", tint: .purple, title: L10n.text("What's New in Version %@", updates.current)) { chevron }
-                }
-            }
-        }
-    }
-    private var chevron: some View {
-        Image(systemName: "chevron.right").font(.system(size: SettingsStyle.chevron, weight: .semibold)).foregroundStyle(.tertiary)
-    }
-    /// A whole row that presents a sheet, styled like the rows that push a page.
-    @ViewBuilder private func row(action: @escaping () -> Void, @ViewBuilder label: () -> some View) -> some View {
-        let button = Button(action: action, label: label)
-        #if os(tvOS)
-        button
-        #else
-        button.buttonStyle(SettingsRowStyle())
-        #endif
-    }
-}
 
 /// The small "New" capsule on the Settings entry while an update waits.
 struct NewBadge: View {

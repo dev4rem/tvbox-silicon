@@ -9,7 +9,7 @@ import Observation
         self.defaults = defaults
         keys = defaults.stringArray(forKey: "pinnedSources.v1") ?? []
     }
-    private func key(_ site: Site, origin: URL) -> String { EpisodeSkipSettings.scope(origin: origin, source: site.key, video: "") }
+    private func key(_ site: Site, origin: URL) -> String { EpisodeSkipSettings.scope(origin: site.origin(or: origin), source: site.sourceKey, video: "") }
     public func contains(_ site: Site, origin: URL) -> Bool { keys.contains(key(site, origin: origin)) }
     public func toggle(_ site: Site, origin: URL) {
         let key = key(site, origin: origin)

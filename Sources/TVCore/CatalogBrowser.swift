@@ -19,7 +19,17 @@ import Observation
     public private(set) var request: Request = .home
     private var generation = 0
     private var pending: Task<CatalogPage, Error>?
+    private var pendingCategories: Task<CatalogPage, Error>?
     public init() {}
+
+    /// Release this page's work without discarding already displayed content.
+    public func cancel() {
+        generation += 1
+        pending?.cancel(); pending = nil
+        pendingCategories?.cancel(); pendingCategories = nil
+        if busy { loaded = false }
+        busy = false
+    }
 
     public func load(_ request: Request, client: CatalogClient) async {
         await load(request) { request in
@@ -33,16 +43,24 @@ import Observation
     /// The category bar for a page that opened on a search: categories only come with the home
     /// answer, so fetch it without touching the videos on screen.
     public func loadCategories(client: CatalogClient) async {
-        guard categories.isEmpty, let home = try? await client.home(), !Task.isCancelled, categories.isEmpty else { return }
+        guard !Task.isCancelled, categories.isEmpty, pendingCategories == nil else { return }
+        let current = generation
+        let task = Task { try await client.home() }
+        pendingCategories = task
+        defer { if generation == current { pendingCategories = nil } }
+        let home = try? await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        guard generation == current, !Task.isCancelled, !task.isCancelled, categories.isEmpty, let home else { return }
         categories = home.categories
     }
 
     public func load(_ request: Request, fetch: @escaping @Sendable (Request) async throws -> CatalogPage) async {
+        guard !Task.isCancelled else { return }
         pending?.cancel()
+        pendingCategories?.cancel(); pendingCategories = nil
         generation += 1
         let current = generation
         self.request = request
-        busy = true; error = nil
+        busy = true; loaded = false; error = nil
         switch request {
         case .home: category = ""; query = ""; page = 1
         case let .list(category, query, page): self.category = category ?? ""; self.query = query; self.page = page

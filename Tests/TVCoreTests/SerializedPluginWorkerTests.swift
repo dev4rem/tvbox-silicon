@@ -137,3 +137,95 @@ private func eventually(_ predicate: () -> Bool) async throws {
     #expect(try await worker.request(resources: "app", json: "{\"quick\":1}").contains("\"quick\":1"))
     #expect(abandoned.executed.count == 1)
 }
+
+@Test func newPluginRequestsDoNotJoinAbandonedNativeCalls() async throws {
+    let gate = NativeCallGate(); defer { gate.release() }
+    let worker = SerializedPluginWorker(width: 2) { _, json in gate.execute(json) }
+    let old = Task { try await worker.request(resources: "app", json: "blocked", search: true) }
+    try await eventually { gate.executed.count == 1 }
+    old.cancel()
+    await #expect(throws: CancellationError.self) { try await old.value }
+    let retry = Task { try await worker.request(resources: "app", json: "blocked", search: true) }
+    try await eventually { gate.executed.count == 2 }
+    gate.release()
+    #expect(try await retry.value == "blocked")
+}
+
+@Test func pluginStartNotificationsFollowExecutionAndJoinedCallers() async throws {
+    let gate = NativeCallGate(); defer { gate.release() }
+    let starts = NativeCallGate()
+    let worker = SerializedPluginWorker(interactiveWidth: 1) { _, json in gate.execute(json) }
+    let first = Task { try await worker.request(resources: "app", json: "blocked", onStart: { _ = starts.execute("first") }) }
+    try await eventually { gate.executed.count == 1 }
+    let joined = Task { try await worker.request(resources: "app", json: "blocked", onStart: { _ = starts.execute("joined") }) }
+    try await eventually { starts.executed.count == 2 }
+    let queued = Task { try await worker.request(resources: "app", json: "next", onStart: { _ = starts.execute("next") }) }
+    try await eventually { worker.scheduling.pending == 1 }
+    #expect(starts.executed == ["first", "joined"])
+    gate.release()
+    _ = try await first.value; _ = try await joined.value
+    #expect(try await queued.value == "next")
+    #expect(starts.executed == ["first", "joined", "next"])
+}
+
+@Test func expiredRunningWorkAsksTheHostToStopIt() async throws {
+    let gate = NativeCallGate(); defer { gate.release() }
+    let abandoned = NativeCallGate()
+    let worker = SerializedPluginWorker(timeout: 0.1, abandon: { _, id in _ = abandoned.execute(id) }) { _, json in
+        gate.execute(json.contains("\"stuck\"") ? "blocked:" + json : json)
+    }
+    await #expect(throws: (any Error).self) { try await worker.request(resources: "app", json: "{\"stuck\":1}") }
+    // A plugin waiting for a sign-in nobody can give ends at the host's next checkpoint.
+    try await eventually { abandoned.executed.count == 1 }
+    let id = try #require(abandoned.executed.first)
+    #expect(try #require(gate.executed.first).contains("\"request\":\"\(id)\""))
+}
+
+@Test func hostCommandsDoNotWaitBehindPluginCalls() async throws {
+    let gate = NativeCallGate(); defer { gate.release() }
+    let worker = SerializedPluginWorker(interactiveWidth: 1) { _, json in gate.execute(json) }
+    let stuck = Task { try await worker.request(resources: "app", json: "blocked") }
+    try await eventually { gate.executed.count == 1 }
+    // Starting a cloud-drive video needs its CDN address while every plugin slot is busy.
+    #expect(try await worker.immediate(resources: "app", json: "directMedia") == "directMedia")
+    gate.release()
+    _ = try await stuck.value
+}
+
+@Test func hostStopsAndBaiduOrAliyunSignInsReadAsReasons() {
+    #expect(PluginFailure.message(["error": .string("x"), "errorCode": .string("source_timeout")], language: "en")?.contains("took too long") == true)
+    let baidu = PluginFailure.message(["error": .string("x"), "errorCode": .string("cloud_login_required"), "drive": .string("baidu")], language: "en")
+    #expect(baidu?.contains("Baidu Netdisk") == true)
+    #expect(CloudDriveLoginRequired(rawValue: "aliyun")?.message(language: "zh-Hans").contains("阿里云盘") == true)
+}
+
+@Test @MainActor func baiduAndAliyunSignInCodesReachTheAppWhileTheRequestRuns() async throws {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let watch = PluginSignIn.watch(folder: folder, source: "玩偶")
+    let now = Date().timeIntervalSince1970 * 1000
+    let code = "{\"drive\":\"baidu\",\"time\":\(now),\"seconds\":180,\"image\":\"https://passport.baidu.com/v2/api/qrcode?sign=abc\"}"
+    try Data(code.utf8).write(to: folder.appendingPathComponent("login-prompt.json"))
+    for _ in 0..<150 where PluginSignIn.shared.prompt == nil { try await Task.sleep(for: .milliseconds(20)) }
+    let prompt = try #require(PluginSignIn.shared.prompt)
+    #expect(prompt.drive == "baidu" && prompt.image?.absoluteString.hasSuffix("sign=abc") == true && prompt.source == "玩偶")
+    // Scanned and confirmed: the code closes while the source restarts with the account.
+    try await Task.sleep(for: .milliseconds(1100))
+    try Data("{\"drive\":\"baidu\",\"time\":\(now + 2000),\"signedIn\":true}".utf8).write(to: folder.appendingPathComponent("login-prompt.json"))
+    for _ in 0..<150 where PluginSignIn.shared.prompt != nil { try await Task.sleep(for: .milliseconds(20)) }
+    #expect(PluginSignIn.shared.prompt == nil)
+    // The request ends (played, failed or cancelled): the code goes away with it.
+    await watch.end()
+    #expect(PluginSignIn.shared.prompt == nil)
+    #expect(!FileManager.default.fileExists(atPath: folder.appendingPathComponent("login-prompt.json").path))
+}
+
+@Test func aliyunSignInCarriesItsRefreshTokenInBizExt() {
+    // bizExt is base64 of JSON whose names can be GBK; only the token matters.
+    var json = Data("{\"pds_login_result\":{\"nickName\":\"".utf8)
+    json.append(contentsOf: [0xD6, 0xD0])
+    json.append(contentsOf: Data("\",\"refreshToken\":\"0123456789abcdef0123456789abcdef\"}}".utf8))
+    #expect(CloudDriveQRLogin.aliyunRefreshToken(json.base64EncodedString()) == "0123456789abcdef0123456789abcdef")
+    #expect(CloudDriveQRLogin.aliyunRefreshToken("not base64") == nil)
+}

@@ -49,6 +49,63 @@ import TVCore
             print("after seek duration=\(Int(duration)) time=\(String(format: "%.1f", player.currentTime().seconds))")
         }
     }
+    /// For each drive (play flag) of one video, how playback gets its bytes: straight from the CDN
+    /// (CloudStreams) or through the plugin's proxy, with the address lookup time and a read speed.
+    static func driveCheck(subscription: String, source: String, query: String?) async throws {
+        let config = try await HTTPClient().subscription(WebAddress.resolve(subscription))
+        guard let site = config.sites.first(where: { $0.key == source || $0.name.contains(source) }) else { print("no source matches \(source)"); return }
+        let client = CatalogClient(site: site, origin: config.origin, jarURL: config.spiderURL)
+        print("loading \(site.name)")
+        let videos = if let query { try await client.list(category: nil, query: query, page: 1).videos } else { try await client.home().videos }
+        guard let first = videos.first else { print("no videos"); return }
+        print("\(videos.count) videos, opening \(first.name)")
+        let video = try await client.detail(first.id)
+        print("\(site.name) · \(video.name) · drives: \(EpisodePlaylist(video.episodes).flags.joined(separator: ", "))")
+        for flag in EpisodePlaylist(video.episodes).flags {
+            guard let episode = video.episodes.first(where: { $0.flag == flag }) else { continue }
+            do {
+                let channel = try await client.playback(episode)
+                let address = try await EmbeddedJarHost.shared.recoverProxy(channel.url)
+                guard EmbeddedJarHost.isPluginProxy(address) else {
+                    print("\(flag): no proxy, plays from \(address.host() ?? address.scheme ?? "-")")
+                    continue
+                }
+                let started = Date()
+                let media = await EmbeddedJarHost.shared.directMedia(address)
+                let lookup = String(format: "%.1f", Date().timeIntervalSince(started))
+                if let media {
+                    print("\(flag): DIRECT \(media.url.host() ?? "-") \(media.length / 1_048_576) MB, lookup \(lookup)s, \(try await readSpeed(media.url, headers: media.headers, parallel: true))")
+                } else {
+                    print("\(flag): PROXY \(EmbeddedJarHost.proxyRoute(address)), lookup \(lookup)s, \(try await readSpeed(address, headers: [:], parallel: false))")
+                }
+            } catch { print("\(flag): failed \(error.localizedDescription)") }
+        }
+    }
+    /// Reads the first 8 MB in 2 MB ranges, four at once like CloudStreams or one after another like AVPlayer on a proxy.
+    static func readSpeed(_ url: URL, headers: [String: String], parallel: Bool) async throws -> String {
+        let piece = 2 << 20
+        @Sendable func fetch(_ index: Int) async throws -> Int {
+            var request = URLRequest(url: url, timeoutInterval: 30)
+            for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
+            request.setValue("bytes=\(index * piece)-\((index + 1) * piece - 1)", forHTTPHeaderField: "Range")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard status == 206 else { throw TVError.unsupported("HTTP \(status) for a range") }
+            return data.count
+        }
+        let started = Date()
+        var bytes = 0
+        if parallel {
+            bytes = try await withThrowingTaskGroup(of: Int.self) { group in
+                for index in 0..<4 { group.addTask { try await fetch(index) } }
+                return try await group.reduce(0, +)
+            }
+        } else {
+            for index in 0..<4 { bytes += try await fetch(index) }
+        }
+        let seconds = Date().timeIntervalSince(started)
+        return String(format: "%d MB in %.1fs = %.2f MB/s", bytes >> 20, seconds, Double(bytes) / seconds / 1_048_576)
+    }
     static func main() async throws {
         let args = CommandLine.arguments
         guard args.count >= 2 else {
@@ -84,6 +141,63 @@ import TVCore
             if let first = channels.first { let live = try await BilibiliLive.resolve(first); print("resolved", live.channel.url.absoluteString.prefix(90), "qualities", live.qualities.map { "\($0.id) \($0.label)" }, "current", live.current ?? -1) }
             return
         }
+        if args[1] == "--douyin-sign", args.count >= 4, let now = Int64(args[3]) {
+            // --douyin-sign <query> <epoch ms>: a_bogus with every random draw 0.5, to compare with the reference.
+            print(DouyinSign.aBogus(query: args[2], now: now, random: { 0.5 }))
+            return
+        }
+        if args[1] == "--douyin-handoff" {
+            // --douyin-handoff: a TV-side receiver and an iPhone-side send over the LAN address, plus a
+            // forged send (wrong key) that must be refused.
+            let receiver = DouyinHandoff.Receiver()
+            let got = AsyncStream<DouyinAccount> { continuation in
+                _ = Task { let link = try await receiver.start { continuation.yield($0); continuation.finish() }
+                    print("link", link.url.absoluteString.replacingOccurrences(of: #"key=[^&]+"#, with: "key=…", options: .regularExpression))
+                    var forged = URLComponents(url: link.url, resolvingAgainstBaseURL: false)!
+                    forged.queryItems = forged.queryItems!.map { $0.name == "key" ? URLQueryItem(name: "key", value: String(repeating: "A", count: 43)) : $0 }
+                    do { try await DouyinHandoff.send(DouyinAccount(cookie: "sessionid=forged"), to: DouyinHandoff.Link(forged.url!)!); print("forged send ACCEPTED (bad)") }
+                    catch { print("forged send refused:", error.localizedDescription) }
+                    try await DouyinHandoff.send(DouyinAccount(cookie: "sessionid=test; ttwid=x", name: "probe"), to: DouyinHandoff.Link(link.url)!)
+                    print("sent")
+                }
+            }
+            for await account in got { print("received", account.name, account.cookie) }
+            receiver.stop()
+            return
+        }
+        if args[1] == "--live", args.count >= 3, let platform = LivePlatform(rawValue: args[2]) {
+            // --live <bilibili|douyu|huya|douyin> [keyword|room:<id>]: areas, the first area's rooms (or the
+            // search results), then the first room's stream through AVPlayer for a few seconds.
+            setvbuf(stdout, nil, _IONBF, 0)
+            var rooms: [LiveRoom] = []
+            if args.count > 3, args[3].hasPrefix("room:") {
+                rooms = [] // played directly below
+            } else if args.count > 3 {
+                rooms = try await LiveCatalog.search(platform, keyword: args[3])
+                print("search \(args[3]): \(rooms.count) rooms")
+            } else {
+                let areas = try await LiveCatalog.areas(platform)
+                print("areas \(areas.map(\.name).joined(separator: " "))")
+                let first = try await LiveCatalog.rooms(platform, area: areas[0], page: 1)
+                let second = try await LiveCatalog.rooms(platform, area: areas[0], page: 2)
+                print("\(areas[0].name): page 1 \(first.count) rooms, page 2 \(second.count)")
+                if areas.count > 1 { print("\(areas[1].name): \(try await LiveCatalog.rooms(platform, area: areas[1], page: 1).count) rooms") }
+                rooms = first
+            }
+            for room in rooms.prefix(4) { print("  \(room.roomID) | \(room.host) | \(room.title) | \(room.online) | \(room.area) | \(room.cover?.absoluteString.prefix(50) ?? "-")") }
+            let address = args.count > 3 && args[3].hasPrefix("room:") ? URL(string: "\(platform.scheme)://room/\(args[3].dropFirst(5))")! : rooms.first?.url
+            guard let address else { return }
+            let live = try await LiveCatalog.resolve(Channel(name: "", url: address))
+            print("resolved \(live.channel.name) \(live.channel.url.absoluteString.prefix(110))")
+            print("qualities \(live.qualities.map { "\($0.id) \($0.label)" }) current \(live.current ?? -1)")
+            let item = AVPlayerItem(asset: AVURLAsset(url: live.channel.url, options: ["AVURLAssetHTTPHeaderFieldsKey": live.channel.headers]))
+            let player = AVPlayer(playerItem: item); player.isMuted = true; player.play()
+            for second in 1...10 {
+                try await Task.sleep(for: .seconds(1))
+                print("t=\(second) status=\(item.status.rawValue) time=\(String(format: "%.1f", player.currentTime().seconds)) size=\(Int(item.presentationSize.width))x\(Int(item.presentationSize.height)) error=\(item.error.map { "\($0)" } ?? "-")")
+            }
+            return
+        }
         if args[1] == "--bili-live", args.count >= 3, let room = Int(args[2]) {
             // --bili-live <room>: a live room's stream through AVPlayer for a few seconds.
             setvbuf(stdout, nil, _IONBF, 0)
@@ -107,6 +221,81 @@ import TVCore
             receiver.update(.init(playing: true, position: 12, duration: 300))
             print("listening")
             try await Task.sleep(for: .seconds(args.count > 2 ? Double(args[2]) ?? 60 : 60))
+            return
+        }
+        if args[1] == "--hongguo-check" || args[1] == "--hongguo-play" {
+            // --hongguo-play <series id> [episode number] isolates playback from catalog/search availability.
+            // --hongguo-check [series id] [episode number] also checks the catalog, search and rankings.
+            setvbuf(stdout, nil, _IONBF, 0)
+            let client = CatalogClient(site: .hongguo, origin: URL(string: "https://example.invalid/")!)
+            var defaultID: String?
+            if args[1] == "--hongguo-check" {
+                let home = try await client.home()
+                defaultID = home.videos.first?.id
+                print("home categories=\(home.categories.count) videos=\(home.videos.count)")
+                let search = try await client.list(category: nil, query: "总裁", page: 1)
+                print("search videos=\(search.videos.count) pages=\(search.pageCount)")
+                let rank = try await client.list(category: "hot-drama", query: "", page: 1)
+                print("ranking videos=\(rank.videos.count) pages=\(rank.pageCount)")
+            }
+            guard let id = args.count > 2 ? args[2] : defaultID else { throw TVError.emptyPlaylist }
+            let video = try await client.detail(id)
+            let index = args.count > 3 ? (Int(args[3]) ?? 4) - 1 : 3
+            guard video.episodes.indices.contains(index) else { throw TVError.emptyPlaylist }
+            print("detail episodes=\(video.episodes.count) selected=\(index + 1)")
+            let started = Date()
+            let channel = try await client.playback(video.episodes[index])
+            print("resolve seconds=\(Date().timeIntervalSince(started)) streaming=\(channel.url.scheme == HongguoStreams.scheme)")
+            let asset = HongguoStreams.asset(for: channel.url) ?? AVURLAsset(url: channel.url, options: ["AVURLAssetHTTPHeaderFieldsKey": channel.headers])
+            let item = AVPlayerItem(asset: asset), player = AVPlayer()
+            item.preferredForwardBufferDuration = HongguoStreams.forwardBufferDuration
+            player.replaceCurrentItem(with: item); player.isMuted = true; player.play()
+            let positionUpdates = Task {
+                while !Task.isCancelled {
+                    HongguoStreams.updatePosition(for: channel.url, seconds: player.currentTime().seconds)
+                    try? await Task.sleep(for: .milliseconds(200))
+                }
+            }
+            defer { positionUpdates.cancel(); HongguoStreams.stop(channel.url) }
+            var firstFrame = false
+            for _ in 0..<100 {
+                try await Task.sleep(for: .milliseconds(200))
+                if item.status == .failed { throw item.error ?? TVError.emptyPlaylist }
+                if !firstFrame, player.currentTime().seconds > 0.05 {
+                    firstFrame = true
+                    let stats = await HongguoStreams.statistics(for: channel.url)
+                    print("first frame seconds=\(Date().timeIntervalSince(started)) bytes=\(stats?.received ?? 0)/\(stats?.total ?? 0)")
+                }
+                if player.currentTime().seconds > 2 { break }
+            }
+            let duration = try await asset.load(.duration).seconds
+            print("play status=\(item.status.rawValue) time=\(player.currentTime().seconds) size=\(item.presentationSize) duration=\(duration)")
+            if let stats = await HongguoStreams.statistics(for: channel.url) {
+                print("startup seconds=\(Date().timeIntervalSince(started)) bytes=\(stats.received)/\(stats.total) cache=\(stats.cached) requests=\(stats.requests)")
+            }
+            guard player.currentTime().seconds > 2 else { throw TVError.emptyPlaylist }
+            player.pause()
+            try await Task.sleep(for: .seconds(3))
+            let beforePause = await HongguoStreams.statistics(for: channel.url)
+            try await Task.sleep(for: .seconds(3))
+            let afterPause = await HongguoStreams.statistics(for: channel.url)
+            if let beforePause, let afterPause {
+                print("paused bytes=\(afterPause.received)/\(afterPause.total) additional=\(afterPause.received - beforePause.received) cache=\(afterPause.cached) bufferedThrough=\(afterPause.bufferedThrough)s")
+                guard afterPause.received == beforePause.received else { throw TVError.emptyPlaylist }
+                guard afterPause.bufferedThrough <= player.currentTime().seconds + HongguoStreams.forwardBufferDuration + 10 else { throw TVError.emptyPlaylist }
+                if duration > 90 { guard afterPause.received < afterPause.total else { throw TVError.emptyPlaylist } }
+            }
+            player.play()
+            await player.seek(to: CMTime(seconds: max(0, duration - 15), preferredTimescale: 600))
+            try await Task.sleep(for: .seconds(3))
+            print("seek time=\(player.currentTime().seconds) status=\(item.status.rawValue)")
+            guard item.status == .readyToPlay, player.currentTime().seconds >= duration - 16 else { throw TVError.emptyPlaylist }
+            await player.seek(to: CMTime(seconds: 5, preferredTimescale: 600))
+            try await Task.sleep(for: .seconds(2))
+            print("seek back time=\(player.currentTime().seconds) status=\(item.status.rawValue)")
+            guard item.status == .readyToPlay, (5...10).contains(player.currentTime().seconds) else { throw TVError.emptyPlaylist }
+            player.pause()
+            HongguoStreams.stop(channel.url)
             return
         }
         if args[1] == "--bili-play", args.count >= 3 {
@@ -175,6 +364,17 @@ import TVCore
             }
             let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             print(String(decoding: try encoder.encode(results.sorted { $0.address < $1.address }), as: UTF8.self))
+            return
+        }
+        if args[1] == "--drive-check", args.count >= 4 {
+            // --drive-check <subscription> <source> [search]: each drive of a cloud-drive source's first
+            // video, DIRECT (CDN, CloudStreams) or PROXY (every byte through the plugin runtime).
+            setvbuf(stdout, nil, _IONBF, 0)
+            do { try await driveCheck(subscription: args[2], source: args[3], query: args.count > 4 ? args[4] : nil) }
+            catch { print("failed: \(error.localizedDescription)") }
+            for entry in await Diagnostics.shared.snapshot().entries where entry.category.hasPrefix("jar") || entry.category.hasPrefix("plugin") {
+                print("  \(entry.category): \(entry.message.prefix(240))")
+            }
             return
         }
         if args[1] == "--catalog-check", args.count >= 3 {

@@ -75,6 +75,11 @@ import TVCore
     var danmakuOpacity: Double { sourceDanmaku.isEmpty ? catalogDanmaku.opacity : 0.9 }
     var danmakuRevision: String { sourceDanmaku.isEmpty ? catalogDanmaku.renderedRevision : "" }
     var onPlaybackEnded: (() -> Void)?
+    /// Plays another line of the same episode when this file can't play here (an MKV original);
+    /// returns that line's name, or nil when there is none.
+    var onUnplayableFile: (() -> String?)?
+    /// Why the player is switching lines, shown while the other line loads.
+    private var switchNotice: String?
     /// Qualities the stream can switch between (Bilibili), and the one chosen; nil is automatic.
     private(set) var qualities: [StreamQuality] = []
     /// A live stream: played at the live edge, without scrubbing.
@@ -146,11 +151,11 @@ import TVCore
     func choose(quality: Int?) {
         guard let channel = playing, quality != self.quality,
               let url = quality.flatMap({ id in qualities.first { $0.id == id }?.url }) ?? automatic else { return }
-        if BilibiliLive.room(url) != nil {
+        if LiveCatalog.isRoom(url) {
             // A live quality is another stream address, fetched now; live has no position to keep.
             let active = generation
             Task {
-                guard let resolved = try? await BilibiliLive.resolve(Channel(name: channel.name, group: channel.group, url: url, logo: channel.logo)),
+                guard let resolved = try? await LiveCatalog.resolve(Channel(name: channel.name, group: channel.group, url: url, logo: channel.logo)),
                       self.generation == active else { return }
                 if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
                 if let failureObserver { NotificationCenter.default.removeObserver(failureObserver) }
@@ -172,6 +177,12 @@ import TVCore
         if paused { player.pause() }
     }
 
+    /// The other line could not be resolved either: show why instead of loading forever.
+    func lineSwitchFailed(_ message: String) {
+        guard switchNotice != nil else { return }
+        switchNotice = nil; error = message; loading = false
+    }
+
     func setSpeed(_ speed: Float) {
         player.defaultRate = speed
         if player.rate != 0 { player.rate = speed }
@@ -187,7 +198,7 @@ import TVCore
     static weak var current: PlaybackSession?
     func start(_ channel: Channel) {
         Self.current = self
-        stop(); error = nil; loading = true; sourceDanmaku = []; qualities = []; quality = nil
+        stop(); error = nil; loading = true; sourceDanmaku = []; qualities = []; quality = nil; switchNotice = nil
         historyContext = channel.historyContext
         requestedResumePosition = channel.resumePosition
         pendingResume = channel.resumePosition.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
@@ -196,23 +207,51 @@ import TVCore
         if !DanmakuSource.has(channel.url), channel.historyContext?.sourceKey != Bilibili.siteKey {
             catalogDanmaku.startAutomatic(channel.historyContext)
         }
-        isLive = BilibiliLive.room(channel.url) != nil || channel.group == L10n.text("Bilibili Live")
+        isLive = LiveCatalog.isRoom(channel.url) || channel.group == L10n.text("Bilibili Live")
         let activeGeneration = generation
         Diagnostics.shared.record(.info, "player", "start name=\(channel.name) group=\(channel.group) url=\(channel.url.absoluteString) headers=\(channel.headers.keys.sorted().joined(separator: ","))")
         preparation = Task { [weak self] in
             guard let self else { return }
-            // A Bilibili Live room becomes its current stream address now; the address expires.
+            // A live room becomes its current stream address now; the address expires.
             var channel = channel
             var liveQualities: [StreamQuality] = [], liveQuality: Int?
             if let room = BilibiliLive.room(channel.url) { self.listen(room: room, generation: activeGeneration) }
-            if BilibiliLive.room(channel.url) != nil {
-                do { (channel, liveQualities, liveQuality) = try await BilibiliLive.resolve(channel) }
+            if LiveCatalog.isRoom(channel.url) {
+                do { (channel, liveQualities, liveQuality) = try await LiveCatalog.resolve(channel) }
                 catch {
                     guard self.generation == activeGeneration, !Task.isCancelled else { return }
                     self.error = error.localizedDescription; self.loading = false; return
                 }
             }
             var address = channel.url
+            do { address = try await EmbeddedJarHost.shared.recoverProxy(address) }
+            catch {
+                guard self.generation == activeGeneration, !Task.isCancelled else { return }
+                self.error = error.localizedDescription; self.loading = false; return
+            }
+            // A cloud-drive file streams straight from its CDN: the plugin's proxy only reveals the
+            // address. Otherwise every range AVPlayer opens costs the plugin a set of threads.
+            if let media = await EmbeddedJarHost.shared.directMedia(address) {
+                guard self.generation == activeGeneration, !Task.isCancelled else { return }
+                let proxied = address
+                address = CloudStreams.register(media) { await EmbeddedJarHost.shared.directMedia(proxied) }
+                Diagnostics.shared.record(.info, "player", "cloud direct host=\(media.url.host() ?? "-") length=\(media.length)")
+                // Drives keep originals as uploaded; Apple devices can't open MKV. Say so now, or switch
+                // to the drive's transcoded line, instead of letting AVPlayer fail with a vague error.
+                if await CloudStreams.isMatroska(address) {
+                    guard self.generation == activeGeneration, !Task.isCancelled else { return }
+                    if let line = self.onUnplayableFile?() {
+                        Diagnostics.shared.record(.warning, "player", "mkv original; switching to line=\(line)")
+                        self.switchNotice = L10n.text("The original file is MKV, which Apple devices can't play, so the %@ line is playing instead.", line)
+                        return
+                    }
+                    Diagnostics.shared.record(.warning, "player", "mkv original; no transcoded line")
+                    self.error = L10n.text("This video is an MKV file, which Apple devices can't play."); self.loading = false; return
+                }
+            } else if EmbeddedJarHost.isPluginProxy(address) {
+                // Every byte of this stream passes through the plugin runtime.
+                Diagnostics.shared.record(.warning, "player", "plugin proxy stream \(EmbeddedJarHost.proxyRoute(address))")
+            }
             // A downloaded episode plays from disk: its file, or its HLS through a loopback server.
             if address.scheme == DownloadLibrary.scheme {
                 do { address = try await DownloadLibrary.shared.playbackAddress(for: address) }
@@ -251,8 +290,10 @@ import TVCore
         #endif
         // Some providers require request headers. AVURLAsset's HTTP-header option is
         // best-effort and is not a guarantee for every redirected HLS segment.
-        let asset = BilibiliStreams.asset(for: url) ?? AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": channel.headers])
+        let asset = CloudStreams.asset(for: url) ?? HongguoStreams.asset(for: url) ?? BilibiliStreams.asset(for: url)
+            ?? AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": channel.headers])
         let item = AVPlayerItem(asset: asset)
+        if url.scheme == HongguoStreams.scheme { item.preferredForwardBufferDuration = HongguoStreams.forwardBufferDuration }
         observation = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
             let status = item.status
             let message = item.error?.localizedDescription
@@ -326,10 +367,14 @@ import TVCore
         guard let item = player.currentItem else { return true }
         restorePositionIfNeeded(item)
         updateSkipping(item)
+        if let url = playing?.url { HongguoStreams.updatePosition(for: url, seconds: pendingResume ?? player.currentTime().seconds) }
         if tick % 5 == 0 { saveHistory() }
         let events = item.accessLog()?.events ?? []
         let now = Date()
         var next = Transfer(received: events.reduce(Int64(0)) { $0 + max(0, $1.numberOfBytesTransferred) })
+        // A resource-loader stream's bytes never reach the access log.
+        let cloud = automatic.flatMap(CloudStreams.transfer(for:))
+        if let cloud { next.received = max(next.received, cloud.received) }
         #if os(macOS)
         // HLS goes through the local proxy, which sees upstream bytes as they arrive.
         let upstream = proxy?.stats.snapshot
@@ -350,7 +395,7 @@ import TVCore
         }
         // The Mac plays HLS through a local proxy; name the real server instead.
         let segmentHost = events.last?.uri.flatMap { URL(string: $0)?.host() }
-        next.host = segmentHost.flatMap { ["127.0.0.1", "localhost"].contains($0) ? nil : $0 } ?? origin
+        next.host = segmentHost.flatMap { ["127.0.0.1", "localhost"].contains($0) ? nil : $0 } ?? cloud?.host ?? origin
         #if os(macOS)
         if let upstream {
             next.host = upstream.host ?? next.host
@@ -367,6 +412,7 @@ import TVCore
         if QALaunch.page?.hasPrefix("play-source:") == true || QALaunch.page == "resume-last" {
             let report: [String: Any] = ["seconds": position, "duration": duration, "ready": item.status == .readyToPlay,
                 "rate": player.rate, "error": error ?? "", "danmakuCount": danmaku.count,
+                "errorDetail": item.error.map(Self.describe) ?? "", "videoWidth": item.presentationSize.width, "videoHeight": item.presentationSize.height,
                 "danmakuState": catalogDanmaku.automaticState, "cached": catalogDanmaku.fromCache,
                 "introEnd": skipSettings.introEnd, "outroLength": skipSettings.outroLength,
                 "requestedResumePosition": requestedResumePosition ?? 0, "restoredPosition": restoredPosition ?? 0]
@@ -390,12 +436,15 @@ import TVCore
     }
     func stop() {
         saveHistory()
+        if let url = playing?.url { HongguoStreams.stop(url) }
+        if let automatic { CloudStreams.stop(automatic) }
+        playing = nil
         catalogDanmaku.clear()
         historyContext = nil; pendingResume = nil; restoringPosition = false
         requestedResumePosition = nil; restoredPosition = nil
         skipScope = nil; skipSettings = EpisodeSkipSettings(); skipPass = EpisodeSkipPass()
         position = 0; duration = 0; editingSkip = false; resumeAfterEditing = false; seekingSegment = false
-        onPlaybackEnded = nil
+        onPlaybackEnded = nil; onUnplayableFile = nil
         if player.currentItem != nil {
             let seconds = player.currentTime().seconds
             Diagnostics.shared.record(.info, "player", "stop at=\(seconds.isFinite ? Int(seconds) : -1)s")
@@ -455,6 +504,10 @@ extension PlaybackSession {
         // AVPlayer counts the first segment only once it finishes, so zero bytes means "not yet", not "stalled".
         let speed = transfer.received > 0 ? transfer.bytesPerSecond.map(Self.rate) : nil
         var progress = LoadingProgress(title: L10n.text(loading ? "Connecting…" : "Buffering…"))
+        if let switchNotice {
+            progress.reason = switchNotice
+            return progress
+        }
         if let speed {
             progress.detail = transfer.required.map { L10n.text("%@ · needs %@", speed, Self.rate($0)) }
                 ?? L10n.text("Downloading at %@", speed)

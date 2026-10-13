@@ -9,7 +9,9 @@ import java.util.zip.*;
 public final class BytecodeCompatibility {
     // v11: frames no longer reference the nonexistent java/util/Object; re-convert cached classes.
     // v12: objects that R8 initializes through Object.<init> are allocated directly.
-    public static final String VERSION = "host-v12";
+    // v13: HttpURLConnection range requests are observed too (cloud-drive CDN addresses).
+    public static final String VERSION = "host-v13";
+    private static final java.util.Set<String> connections = java.util.Set.of("java/net/URLConnection", "java/net/HttpURLConnection", "javax/net/ssl/HttpsURLConnection");
 
     private static final String BRIDGES = "tvbox/runtime/generated/InterfaceCalls";
     private record CallSite(String owner, String name, String descriptor) { }
@@ -57,6 +59,13 @@ public final class BytecodeCompatibility {
                         }
                         if (owner.equals("okhttp3/Call") && name.equals("execute") && descriptor.equals("()Lokhttp3/Response;")) {
                             super.visitMethodInsn(Opcodes.INVOKESTATIC, "tvbox/runtime/HttpDiagnostics", newCz ? "executeNewCz" : "execute", "(Lokhttp3/Call;)Lokhttp3/Response;", false);
+                            return;
+                        }
+                        if (opcode == Opcodes.INVOKEVIRTUAL && connections.contains(owner)
+                                && ((name.equals("getResponseCode") && descriptor.equals("()I") && !owner.equals("java/net/URLConnection"))
+                                    || (name.equals("getInputStream") && descriptor.equals("()Ljava/io/InputStream;")))) {
+                            super.visitMethodInsn(Opcodes.INVOKESTATIC, "tvbox/runtime/HttpDiagnostics", name.equals("getResponseCode") ? "responseCode" : "inputStream",
+                                "(Ljava/net/URLConnection;)" + descriptor.substring(2), false);
                             return;
                         }
                         if (opcode == Opcodes.INVOKESTATIC && owner.startsWith("java/")) {

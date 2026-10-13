@@ -1,0 +1,134 @@
+import Foundation
+import Observation
+
+/// Music search across the catalogs, for songs, albums or playlists. Typing waits 350 ms before
+/// searching; each catalog answers on its own, and results show as they arrive, merged and
+/// ranked. A newer query cancels the older one, and a late answer never replaces newer results.
+@MainActor @Observable public final class MusicSearchModel {
+    public private(set) var query = ""
+    public private(set) var kind: MusicSearchKind = .songs
+    public private(set) var results: [MusicTrack] = []
+    public private(set) var collections: [MusicCollection] = []
+    public private(set) var busy = false
+    /// Why a catalog failed this time, by catalog. One failing catalog is not a failed search.
+    public private(set) var failures: [MusicPlatform: MusicProviderError] = [:]
+    /// Set once every catalog answered a song search: the one track the query clearly means, if any.
+    public private(set) var directHit: MusicTrack?
+    private var nothingFound: Bool { results.isEmpty && collections.isEmpty }
+    /// The search finished and no catalog found anything.
+    public var empty: Bool { !busy && !query.isEmpty && nothingFound && failures.count < catalogs.count }
+    /// Every catalog failed: the search itself could not run.
+    public var failed: Bool { !busy && !query.isEmpty && nothingFound && failures.count == catalogs.count }
+
+    private let catalogs: [any MusicCatalogSource]
+    private let health: MusicHealth
+    private var task: Task<Void, Never>?
+    private var generation = UUID()
+    private struct Cached { var results: [MusicTrack]; var collections: [MusicCollection]; var created: Date }
+    private var cache: [String: Cached] = [:]
+    static let debounce: Duration = .milliseconds(350)
+    static let cacheLifetime: TimeInterval = 10 * 60
+
+    public init(catalogs: [any MusicCatalogSource]? = nil, health: MusicHealth = .shared) {
+        self.catalogs = catalogs ?? [QQMusicCatalog(), NeteaseMusicCatalog(health: health)]
+        self.health = health
+    }
+
+    /// Where to fetch a collection's tracks.
+    public func source(for platform: MusicPlatform) -> (any MusicCollectionSource)? {
+        catalogs.first { $0.platform == platform } as? any MusicCollectionSource
+    }
+
+    /// Searches for `text` after the typing pause; `immediately` skips the pause (Return pressed).
+    /// `kind` nil keeps the current kind.
+    public func search(_ text: String, kind newKind: MusicSearchKind? = nil, immediately: Bool = false) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let kind = newKind ?? self.kind
+        guard trimmed != query || kind != self.kind || immediately || (nothingFound && failures.isEmpty && !busy) else { return }
+        task?.cancel()
+        let run = UUID(); generation = run
+        query = trimmed; self.kind = kind; directHit = nil; failures = [:]
+        guard !trimmed.isEmpty else { results = []; collections = []; busy = false; return }
+        let key = kind.rawValue + "|" + MusicMatching.normalize(trimmed) + "|" + MusicMatching.tags(inQuery: trimmed).map(\.rawValue).sorted().joined()
+        if let cached = cache[key], Date().timeIntervalSince(cached.created) < Self.cacheLifetime {
+            results = cached.results; collections = cached.collections; busy = false
+            directHit = kind == .songs ? MusicMatching.directHit(cached.results, query: trimmed) : nil
+            return
+        }
+        if kind == .songs { collections = [] } else { results = [] }
+        busy = true
+        task = Task {
+            if !immediately {
+                try? await Task.sleep(for: Self.debounce)
+                guard !Task.isCancelled, self.generation == run else { return }
+            }
+            if let collectionKind = kind.collectionKind {
+                await self.searchCollections(trimmed, kind: collectionKind, run: run)
+            } else {
+                await self.searchSongs(trimmed, run: run)
+            }
+            guard self.generation == run, !Task.isCancelled else { return }
+            self.busy = false
+            // With a catalog missing, the clearest result may only look clear: the viewer chooses.
+            self.directHit = kind == .songs && self.failures.isEmpty ? MusicMatching.directHit(self.results, query: trimmed) : nil
+            if self.failures.isEmpty { self.cache[key] = Cached(results: self.results, collections: self.collections, created: Date()) }
+        }
+    }
+
+    public func clear() { search("") }
+
+    private func searchSongs(_ query: String, run: UUID) async {
+        var lists: [MusicPlatform: [MusicTrack]] = [:]
+        await withTaskGroup(of: (MusicPlatform, Result<[MusicTrack], MusicProviderError>).self) { group in
+            for catalog in catalogs {
+                group.addTask {
+                    do { return (catalog.platform, .success(try await catalog.search(query, page: 1))) }
+                    catch { return (catalog.platform, .failure(MusicProviderError(error))) }
+                }
+            }
+            for await (platform, result) in group {
+                guard generation == run else { group.cancelAll(); return }
+                guard let tracks = await record(platform, result) else { continue }
+                lists[platform] = tracks
+                guard generation == run else { group.cancelAll(); return }
+                // QQ first: its entries carry durations and covers that NetEase matches join.
+                results = MusicMatching.rank(MusicMatching.merge(MusicPlatform.allCases.compactMap { lists[$0] }), query: query)
+            }
+        }
+    }
+
+    private func searchCollections(_ query: String, kind: MusicCollection.Kind, run: UUID) async {
+        var lists: [MusicPlatform: [MusicCollection]] = [:]
+        await withTaskGroup(of: (MusicPlatform, Result<[MusicCollection], MusicProviderError>).self) { group in
+            for catalog in catalogs {
+                guard let source = catalog as? any MusicCollectionSource else { continue }
+                group.addTask {
+                    do { return (source.platform, .success(try await source.searchCollections(query, kind: kind, page: 1))) }
+                    catch { return (source.platform, .failure(MusicProviderError(error))) }
+                }
+            }
+            for await (platform, result) in group {
+                guard generation == run else { group.cancelAll(); return }
+                guard let found = await record(platform, result) else { continue }
+                lists[platform] = found
+                guard generation == run else { group.cancelAll(); return }
+                collections = MusicCollections.rank(MusicPlatform.allCases.flatMap { lists[$0] ?? [] }, query: query)
+            }
+        }
+    }
+
+    /// Notes a catalog's answer in its health record; the results, or nil after a failure.
+    private func record<T>(_ platform: MusicPlatform, _ result: Result<T, MusicProviderError>) async -> T? {
+        let key = MusicHealth.key(platform.rawValue, platform, .search)
+        switch result {
+        case .success(let value):
+            await health.record(key, error: nil)
+            return value
+        case .failure(let error):
+            guard error != .cancelled else { return nil }
+            failures[platform] = error
+            await health.record(key, error: error)
+            return nil
+        }
+    }
+}

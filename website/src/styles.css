@@ -91,12 +91,6 @@ h1, h2, h3, h4, p { margin: 0; }
 
 /* Hero */
 .hero { padding: 72px 0 0; display: flex; flex-direction: column; align-items: center; }
-.badge {
-  display: inline-flex; align-items: center; gap: 8px; margin-bottom: 28px;
-  font-size: 14px; font-weight: 500; padding: 6px 14px 6px 6px; border-radius: 999px;
-  background: var(--tile); box-shadow: 0 0 0 1px var(--line), 0 2px 6px rgba(0, 0, 0, 0.04);
-}
-.badge img { border-radius: 5px; }
 .actions { display: flex; align-items: center; justify-content: center; gap: 28px; margin-top: 36px; flex-wrap: wrap; }
 .meta { margin-top: 20px; font-size: 13px; color: var(--muted); }
 
@@ -112,8 +106,6 @@ h1, h2, h3, h4, p { margin: 0; }
    cap its width so the whole film fits below the 64px nav on short screens. */
 .hero-film-host { width: 100%; max-width: max(520px, calc((100svh - 64px - 32px - 122px) * 16 / 9 + 154px)); min-height: 200px; }
 .hero-film-link { font-size: 15px; }
-/* The 1.1 film sits between the section intro and its cards. */
-.new-film { margin: 48px 0 64px; }
 
 /* Sections */
 .section { width: min(1200px, 100% - 32px); margin: 0 auto; padding: 140px 0 0; }
@@ -123,6 +115,8 @@ h1, h2, h3, h4, p { margin: 0; }
 
 .card { background: var(--card); border-radius: 36px; padding: 56px 48px 48px; text-align: center; }
 .card + .card { margin-top: 24px; }
+/* The orange label above a feature, like Apple's "New". */
+.card > .eyebrow { margin: 0 auto 8px; color: #bf4800; font-size: 17px; }
 .card h3 { font-size: clamp(26px, 3vw, 38px); font-weight: 600; letter-spacing: -0.03em; line-height: 1.15; }
 :lang(ja) .card h3, :lang(ko) .card h3, :lang(zh-Hant) .card h3 { letter-spacing: 0; }
 .card > p { max-width: 34em; margin: 14px auto 40px; color: var(--muted); font-size: 17px; }
@@ -163,10 +157,6 @@ h1, h2, h3, h4, p { margin: 0; }
 .disclaimer { margin-top: 28px; font-size: 12px; max-width: 60em; line-height: 1.6; }
 
 /* Install: an Apple-style tab bar, product showcase, steps and signature stats */
-a.badge { transition: box-shadow 0.2s ease, transform 0.2s ease; }
-a.badge:hover { transform: translateY(-1px); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.16), 0 6px 14px rgba(0, 0, 0, 0.06); }
-.badge-arrow { color: var(--muted); margin-left: 2px; }
-
 .tabnav { display: flex; justify-content: center; width: fit-content; max-width: 100%; margin: 56px auto 0; border-bottom: 1px solid var(--line); }
 .tab {
   position: relative; font: inherit; font-size: 13px; color: var(--muted); background: none; border: 0; cursor: pointer;
@@ -320,4 +310,4 @@ a.badge:hover { transform: translateY(-1px); box-shadow: 0 0 0 1px rgba(0, 0, 0,
 
 /* SF Symbols (SFSymbol.tsx): sized in em from each symbol's box, centred on the text line. */
 .sf { display: inline-block; flex: none; vertical-align: middle; fill: currentColor; }
-.link .sf, .badge-arrow { font-size: .78em; margin-left: 2px; }
+.link .sf { font-size: .78em; margin-left: 2px; }

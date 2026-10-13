@@ -37,7 +37,7 @@ public final class PluginPreparation: @unchecked Sendable {
     private static let registry = Registry()
     private static let runtimeLock = NSLock()
     nonisolated(unsafe) private static var runtimeStarted = false
-    /// Set once the embedded JVM has answered. Until then a queued request waits for its start-up.
+    /// Set once the JVM has answered; distinguishes startup from execution before Java publishes progress.
     public static var runtimeReady: Bool {
         get { runtimeLock.withLock { runtimeStarted } }
         set { runtimeLock.withLock { runtimeStarted = newValue } }
@@ -80,9 +80,12 @@ public final class PluginPreparation: @unchecked Sendable {
         let began = Date()
         return Task { [weak self] in
             var previous: Data?
+            var file = url
             while !Task.isCancelled {
-                if let modified = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate, modified >= began,
-                   let data = try? Data(contentsOf: url), data != previous,
+                // URL resource values can retain the previous request's modification time.
+                file.removeAllCachedResourceValues()
+                if let modified = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate, modified >= began,
+                   let data = try? Data(contentsOf: file), data != previous,
                    let value = try? JSONDecoder().decode(BuildProgress.self, from: data) {
                     previous = data
                     self?.report(Stage(rawValue: value.stage) ?? .preparing, converted: value.converted, reused: value.reused, host: value.host)
@@ -129,9 +132,7 @@ extension PluginPreparation.Snapshot {
         switch stage {
         case .downloading: return L10n.text("The plugin file is still downloading from the subscription server.")
         case .queued:
-            return PluginPreparation.runtimeReady
-                ? L10n.text("Other plugin requests are using every slot. This one starts as soon as one finishes.")
-                : L10n.text("The plugin runtime is starting. This takes about half a minute after the app opens.")
+            return L10n.text("Waiting for an earlier plugin request to finish.")
         case .converting: return L10n.text("This plugin is running for the first time, so its code is being converted for this device. Next time is much faster.")
         case .preparing, .loading: return L10n.text("The plugin is still working. Plugins run much slower on this device than on Android.")
         case .checking, .verifying, .reusing: return nil

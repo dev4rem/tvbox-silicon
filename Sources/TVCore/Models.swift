@@ -18,6 +18,7 @@ public enum TVError: LocalizedError, Sendable {
 public enum PluginFailure {
     public static func message(_ envelope: [String: JSONValue], language: String? = nil) -> String? {
         guard let detail = envelope["error"]?.string else { return nil }
+        if let login = CloudDriveLoginRequired(envelope: envelope) { return login.message(language: language) }
         let missing = envelope["missingClass"]?.string
         switch envelope["errorCode"]?.string {
         case "source_http":
@@ -27,6 +28,7 @@ public enum PluginFailure {
         case "source_network":
             if let host = envelope["host"]?.string { return L10n.text("The source %@ could not be reached. Retry later.", host, language: language) }
         case "source_empty": return L10n.text("The plugin returned no content. Try another source.", language: language)
+        case "source_timeout": return L10n.text("The source took too long to respond, so Yingxia stopped waiting. Try another line, or try again later.", language: language)
         case "unsupported_native_library": return L10n.text("This plugin is not supported: ftyguard_v8.so is missing.", language: language)
         case "unsupported_android":
             if let missing { return L10n.text("This source needs an Android feature that isn't supported yet: %@.", missing, language: language) }
@@ -100,9 +102,17 @@ public enum WebAddress {
         // Encode Unicode without re-encoding existing %HH sequences. Foundation's
         // automatic repair can otherwise turn %26 into %2526 in mixed Unicode URLs.
         var allowed = CharacterSet.urlFragmentAllowed
-        allowed.insert(charactersIn: "#[]")
+        allowed.insert(charactersIn: "#")
         guard !value.isEmpty, let escaped = value.addingPercentEncoding(withAllowedCharacters: allowed) else { throw TVError.invalidURL }
-        let encoded = escaped.replacingOccurrences(of: "%25([0-9A-Fa-f]{2})", with: "%$1", options: .regularExpression)
+        var encoded = escaped.replacingOccurrences(of: "%25([0-9A-Fa-f]{2})", with: "%$1", options: .regularExpression)
+        // Brackets are legal in an IPv6 authority, but must be escaped in filenames.
+        // Leaving a filename's brackets raw makes Foundation repair the whole URL,
+        // encoding existing percent escapes a second time.
+        if let authority = encoded.range(of: "^(?:[A-Za-z][A-Za-z0-9+.-]*:)?//[^/?#]*", options: .regularExpression) {
+            let host = encoded[authority].replacingOccurrences(of: "%5B", with: "[", options: .caseInsensitive)
+                .replacingOccurrences(of: "%5D", with: "]", options: .caseInsensitive)
+            encoded.replaceSubrange(authority, with: host)
+        }
         guard var components = URLComponents(string: encoded) else { throw TVError.invalidURL }
         // Setting the decoded host asks Foundation to apply IDNA (Punycode).
         if let host = components.host { components.host = host }
@@ -127,6 +137,8 @@ public struct Site: Identifiable, Codable, Hashable, Sendable {
     public let type: Int
     public let api: String
     public let raw: [String: JSONValue]
+    /// The subscription this source came from, once several are merged; see `Subscription.merge`.
+    public var provenance: SourceProvenance? = nil
     public var id: String { key }
     public var native: Bool { (type == 1 || type == 4) && !missingAPI }
     /// Merged subscriptions sometimes carry entries with an empty api; they cannot run anywhere.

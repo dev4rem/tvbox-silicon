@@ -41,7 +41,13 @@ public final class Diagnostics: @unchecked Sendable {
     private let encoder = JSONEncoder()
 
     public init(directory: URL? = nil, capacity: Int = 512, fileLimit: Int = 2_000_000, fileCount: Int = 4) {
-        self.directory = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        #if os(tvOS)
+        // tvOS only permits app-generated files in its cache and temporary directories.
+        let location: FileManager.SearchPathDirectory = .cachesDirectory
+        #else
+        let location: FileManager.SearchPathDirectory = .applicationSupportDirectory
+        #endif
+        self.directory = directory ?? FileManager.default.urls(for: location, in: .userDomainMask)[0]
             .appendingPathComponent("com.tcbox.tvbox/Logs", isDirectory: true)
         self.capacity = max(1, capacity)
         self.fileLimit = max(16_384, fileLimit)

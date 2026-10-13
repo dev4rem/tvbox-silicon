@@ -27,6 +27,8 @@ struct PlaybackHistoryView: View {
         .screenBackdrop()
         .tabTitle(L10n.text("Playback History"))
         .onChange(of: history.entries.isEmpty) { _, empty in if empty { managing = false; selected.removeAll() } }
+        // Leaving the page gives up a title still being prepared.
+        .onDisappear { if store.playing == nil { store.cancelResume() } }
         .confirmationDialog(L10n.text("Remove selected history and its cached content?"), isPresented: $confirmsDelete, titleVisibility: .visible) {
             Button(L10n.text("Remove from history"), role: .destructive) {
                 history.remove(deletionIDs); selected.subtract(deletionIDs); deletionIDs.removeAll()
@@ -100,7 +102,7 @@ struct PlaybackHistoryView: View {
         if managing {
             if selected.contains(entry.id) { selected.remove(entry.id) } else { selected.insert(entry.id) }
         } else {
-            Task { await store.resumeHistory(entry) }
+            store.resume(entry)
         }
     }
 }
@@ -136,7 +138,7 @@ struct HistoryCard: View {
     var body: some View {
         Button {
             guard drag?.active != true else { return }
-            if let action { action() } else { Task { await store.resumeHistory(entry) } }
+            if let action { action() } else { store.resume(entry) }
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 Color.clear.aspectRatio(2.0 / 3.0, contentMode: .fit)
@@ -160,7 +162,13 @@ struct HistoryCard: View {
                         }
                     }
                     .overlay {
-                        if store.resumingHistoryID == entry.id { ProgressView().controlSize(.large) }
+                        // Preparing this title; choosing another card switches to that one.
+                        if store.resumingHistoryID == entry.id {
+                            ZStack {
+                                Color.black.opacity(0.5)
+                                ProgressView().controlSize(.large).tint(.white)
+                            }
+                        }
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .opacity(selection == false ? 0.6 : 1)
@@ -178,7 +186,6 @@ struct HistoryCard: View {
             .frame(maxWidth: details ? .infinity : nil, alignment: .leading)
         }
         .cardButton()
-        .disabled(action == nil && store.resumingHistoryID != nil)
         .accessibilityAddTraits(selection == true ? [.isSelected] : [])
         .contextMenu {
             Button(L10n.text("Remove from history"), systemImage: "trash", role: .destructive) { store.playbackHistory.remove(entry.id) }

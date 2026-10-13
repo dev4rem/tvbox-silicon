@@ -27,7 +27,7 @@ public struct PlaybackHistoryContext: Codable, Hashable, Sendable {
     }
 
     public init(origin: URL, site: Site, video: Video, episode: Episode) {
-        self.init(origin: origin, sourceKey: site.key, sourceName: site.name, videoID: video.id,
+        self.init(origin: site.origin(or: origin), sourceKey: site.sourceKey, sourceName: site.name, videoID: video.id,
                   videoName: video.name, poster: video.poster, episodeID: episode.id,
                   episodeName: episode.name, episodeFlag: episode.flag)
         year = video.year

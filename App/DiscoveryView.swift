@@ -5,6 +5,8 @@ private struct SearchSourceItem: Identifiable {
     let id: String
     let name: String
     var count: Int? = nil
+    /// A source that is slow or failing lately; see `SourceHealth`.
+    var dot: Color? = nil
 }
 
 private struct SearchPoster: Identifiable {
@@ -31,13 +33,19 @@ struct GlobalSearchView: View {
         let later = model.batches.flatMap { batch in sites[batch.source].map { site in batch.videos.map { SearchPoster(site: site, video: $0) } } ?? [] }
         return (first + later).filter { seen.insert($0.id).inserted }
     }
-    /// The source chips: All, then Bilibili (always, so it can be picked before it answers), then the rest.
+    /// Built-in sources can be selected while their first search is still in flight.
     private var sourceItems: [SearchSourceItem] {
-        let bilibili = model.results.first { $0.site.isBuiltIn }
-        let searchingBilibili = model.total > 0 && (bilibili != nil || model.busy)
+        let builtins = Site.builtInSites.filter { site in
+            model.total > 0 && (model.results.contains { $0.site.key == site.key } ||
+                (model.busy && store.subscription?.sites.contains { $0.key == site.key && $0.searchable } == true))
+        }.map { site in
+            SearchSourceItem(id: site.key, name: site.name,
+                             count: model.results.contains { $0.site.key == site.key } ? uniqueVideos(model.videos(for: site.key)).count : nil)
+        }
         return [.init(id: "", name: L10n.text("All Sources"), count: model.videoCount)]
-            + (searchingBilibili ? [.init(id: Bilibili.siteKey, name: Site.bilibili.name, count: bilibili.map { _ in uniqueVideos(model.videos(for: Bilibili.siteKey)).count })] : [])
-            + model.matches.filter { !$0.site.isBuiltIn }.map { .init(id: $0.id, name: $0.site.name, count: uniqueVideos(model.videos(for: $0.id)).count) }
+            + builtins
+            + model.matches.filter { !$0.site.isBuiltIn }.map { .init(id: $0.id, name: $0.site.name, count: uniqueVideos(model.videos(for: $0.id)).count,
+                                                                       dot: store.health(of: $0.site).warning) }
     }
 
     var body: some View {
@@ -54,18 +62,7 @@ struct GlobalSearchView: View {
             .screenBackdrop()
             .sheet(isPresented: $showFailures) { failureDetails }
             .onAppear { if let config = store.subscription { model.resumeSuspended(config: config) } }
-            .onDisappear { model.suspend() }
-            .task(id: model.draft) {
-                let query = model.draft.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard query != model.keyword else { return }
-                if query.isEmpty { model.reset(); return }
-                // Wait for a pause in remote, dictation, or phone keyboard input.
-                do { try await Task.sleep(for: .milliseconds(650)) } catch { return }
-                guard !Task.isCancelled, let config = store.subscription else { return }
-                let draft = model.draft
-                model.search(query, config: config)
-                model.draft = draft
-            }
+            .onDisappear { endVisible = false; model.suspend() }
         #else
         searchResults
             .scrollPosition(id: $model.scrollID)
@@ -80,7 +77,7 @@ struct GlobalSearchView: View {
                 if model.keyword.isEmpty { inputFocused = true }
                 if let config = store.subscription { model.resumeSuspended(config: config) }
             }
-            .onDisappear { model.suspend() }
+            .onDisappear { endVisible = false; model.suspend() }
         #endif
     }
 
@@ -88,8 +85,16 @@ struct GlobalSearchView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 #if os(tvOS)
-                if let config = store.subscription, !model.keyword.isEmpty {
-                    searchHeader(config).padding(.horizontal, -Layout.gutter)
+                // Editing, dictation and search completions only update the draft. The remote
+                // needs an explicit, focusable submit action before starting expensive plugins.
+                if let config = store.subscription {
+                    let query = model.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !query.isEmpty, query != model.keyword {
+                        SearchQueryButton(query: query) { submit(config) }.accessibilityIdentifier("search.submit")
+                    }
+                    if !model.keyword.isEmpty {
+                        searchHeader(config).padding(.horizontal, -Layout.gutter)
+                    }
                 }
                 #endif
                 if let config = store.subscription {
@@ -217,18 +222,18 @@ struct GlobalSearchView: View {
                 }
                 if sourceItems.count > 1 {
                     #if os(tvOS)
-                    ScrollView(.horizontal, showsIndicators: false) {
+                    ChipRow {
                         HStack(spacing: 8) {
                             ForEach(sourceItems) { item in
                                 Chip(title: item.count.map { "\(item.name) · \($0)" } ?? item.name, selected: (model.selectedSource ?? "") == item.id,
-                                     mark: item.id == Bilibili.siteKey) {
+                                     mark: item.id == Bilibili.siteKey, dot: item.dot) {
                                     model.select(item.id.isEmpty ? nil : item.id)
                                 }
                             }
-                        }.padding(.vertical, 4)
+                        }
                     }
                     #else
-                    SourceStrip(items: sourceItems.map { .init(id: $0.id, name: $0.name, count: $0.count) }, selection: model.selectedSource ?? "") { id in
+                    SourceStrip(items: sourceItems.map { .init(id: $0.id, name: $0.name, count: $0.count, dot: $0.dot) }, selection: model.selectedSource ?? "") { id in
                         model.select(id.isEmpty ? nil : id)
                     }
                     #endif
@@ -270,11 +275,20 @@ struct GlobalSearchView: View {
         }
     }
 
+    /// tvOS pills lead with a symbol, as the search pill does; elsewhere the title stands alone.
+    @ViewBuilder private func searchActionLabel(_ title: String, symbol: String) -> some View {
+        #if os(tvOS)
+        Label(title, systemImage: symbol)
+        #else
+        Text(title)
+        #endif
+    }
+
     @ViewBuilder private func searchActionButtons(_ config: Subscription) -> some View {
         if model.busy {
-            Button(L10n.text("Stop")) { model.stop() }.searchAction()
+            Button { model.stop() } label: { searchActionLabel(L10n.text("Stop"), symbol: "stop.fill") }.searchAction()
         } else if model.completed < model.total {
-            Button(L10n.text("Continue search")) { model.resume(config: config) }.searchAction()
+            Button { model.resume(config: config) } label: { searchActionLabel(L10n.text("Continue search"), symbol: "arrow.clockwise") }.searchAction()
         }
         if !model.failures.isEmpty {
             Button { showFailures = true } label: {
@@ -353,8 +367,10 @@ struct GlobalSearchView: View {
             List {
                 ForEach(model.failures) { result in
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(result.site.name).font(.headline)
+                        let health = store.health(of: result.site)
+                        HStack(spacing: 6) { Text(result.site.name).font(.headline); SourceHealthDot(status: health) }
                         Text(result.error ?? "").font(.caption).foregroundStyle(.secondary)
+                        if health == .failing { Text(health.summary).font(.caption).foregroundStyle(Brand.rose) }
                     }
                 }
             }
@@ -485,7 +501,7 @@ private struct QuietPillStyle: ButtonStyle {
 private extension View {
     @ViewBuilder func searchAction() -> some View {
         #if os(tvOS)
-        controlButton()
+        glassPill()
         #else
         buttonStyle(QuietPillStyle())
         #endif
@@ -673,6 +689,7 @@ struct RecommendationsView: View {
             await browser.load(.list(category: category, query: "", page: categoryPage),
                                client: CatalogClient(site: loadedSite, origin: config.origin, jarURL: config.spiderURL))
         }
+        .onDisappear { browser.cancel() }
         .onChange(of: site?.key) { category = nil; categoryPage = 1 }
     }
 
@@ -740,6 +757,7 @@ struct SourceStrip: View {
         let id: String
         let name: String
         var count: Int? = nil
+        var dot: Color? = nil
     }
     let items: [Item]
     let selection: String
@@ -749,7 +767,7 @@ struct SourceStrip: View {
         ScrollStrip(scrollTo: selection, leftLabel: "Scroll sources left", rightLabel: "Scroll sources right") {
             HStack(spacing: 6) {
                 ForEach(items) { item in
-                    SourceChip(name: item.name, count: item.count, selected: item.id == selection) { select(item.id) }
+                    SourceChip(name: item.name, count: item.count, dot: item.dot, selected: item.id == selection) { select(item.id) }
                         .id(item.id)
                 }
             }
@@ -897,6 +915,7 @@ struct ScrollStrip<Content: View>: View {
 private struct SourceChip: View {
     let name: String
     var count: Int? = nil
+    var dot: Color? = nil
     let selected: Bool
     let action: () -> Void
     @State private var hovering = false
@@ -910,6 +929,7 @@ private struct SourceChip: View {
                 if name == Site.bilibili.name { BilibiliGlyph(size: 15).foregroundStyle(selected ? Brand.onAccent : BilibiliMark.blue) } else if let symbol = label.symbol { Text(symbol) }
                 Text(label.title).lineLimit(1)
                 if let count { Text("\(count)").monospacedDigit().opacity(0.55) }
+                if let dot { Image(systemName: "circle.fill").font(.system(size: 7)).foregroundStyle(dot) }
             }
             .font(.system(size: 13, weight: selected ? .semibold : .medium))
             .foregroundStyle(selected ? Brand.onAccent : Color.primary.opacity(0.82))
@@ -940,6 +960,8 @@ private struct SourceChip: View {
 struct SourceLabel {
     var symbol: String?
     var title: String
+    /// The name's segments ("片单", "精选"); the first is the source's own name, the rest are taglines.
+    var parts: [String]
     var text: String { [symbol, title].compactMap { $0 }.joined(separator: " ") }
     init(_ name: String) {
         var text = Substring(name.trimmingCharacters(in: .whitespaces))
@@ -948,11 +970,12 @@ struct SourceLabel {
             text = text.dropFirst()
         }
         let parts = text.split(whereSeparator: { character in
-            "|｜丨¦".contains(character)
+            "|｜丨¦·・".contains(character)
                 || character.unicodeScalars.allSatisfy { (0x2500...0x257F).contains($0.value) } // box drawing
         })
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
-        title = parts.isEmpty ? name : parts.joined(separator: " · ")
+        self.parts = parts.isEmpty ? [name] : parts
+        title = self.parts.joined(separator: " · ")
     }
 }

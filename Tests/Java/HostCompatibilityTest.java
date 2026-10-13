@@ -16,7 +16,7 @@ public class HostCompatibilityTest {
             }
             return;
         }
-        reflectiveArrayCloneWorks(); conversionCacheReusesAndRepairs(); partialInitializationDoesNotHideWorkingSources(); recommendationsMerge(); stateSurvivesAndRestores(); interfaceCallsExecute(); sourceFailuresStaySpecific(); packageContextExists();
+        reflectiveArrayCloneWorks(); conversionCacheReusesAndRepairs(); partialInitializationDoesNotHideWorkingSources(); recommendationsMerge(); stateSurvivesAndRestores(); interfaceCallsExecute(); sourceFailuresStaySpecific(); cloudLoginReturnsToTheApp(); asyncCloudLoginEndsPlayback(); packageContextExists();
         System.out.println("Java host regression checks passed (state, interface bytecode, HTTP failures, Android context).");
     }
 
@@ -175,6 +175,75 @@ public class HostCompatibilityTest {
         });
         try { failing.request(new JSONObject().put("ids", "a")); throw new AssertionError("HTTP failure was hidden"); }
         catch (HttpDiagnostics.SourceHTTPException error) { check(error.status == 503, "Wrong source failure"); }
+    }
+
+    private static void cloudLoginReturnsToTheApp() throws Exception {
+        var networkCalls = new java.util.concurrent.atomic.AtomicInteger();
+        OkHttpClient client = new OkHttpClient.Builder().addInterceptor(chain -> {
+            networkCalls.incrementAndGet();
+            return new Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200)
+                .message("fixture").body(ResponseBody.create("{}", MediaType.get("application/json"))).build();
+        }).build();
+        for (String host : List.of("uop.quark.cn", "api.open.uc.cn")) {
+            for (String action : List.of("getTokenForQrcodeLogin", "getServiceTicketByQrcodeToken")) {
+                PluginSession plugin = new PluginSession(new Spider() {
+                    public String playerContent(String flag, String id, List<String> vip) throws Exception {
+                        try {
+                            HttpDiagnostics.execute(client.newCall(new Request.Builder().url("https://" + host + "/cas/ajax/" + action).build())).close();
+                        } catch (Throwable swallowed) { /* Real spiders sometimes return empty content after a failed login. */ }
+                        return "{}";
+                    }
+                });
+                try { plugin.request(new JSONObject().put("play", "episode").put("flag", "obscured-provider-name")); throw new AssertionError("QR login stayed inside the plugin"); }
+                catch (HttpDiagnostics.CloudLoginRequired login) {
+                    String drive = host.equals("uop.quark.cn") ? "quark" : "uc";
+                    check(login.drive.equals(drive), "Login provider was lost");
+                    JSONObject failure = NativeProbe.failure(new java.lang.reflect.InvocationTargetException(login));
+                    check(failure.optString("errorCode").equals("cloud_login_required") && failure.optString("drive").equals(drive), "Login was classified as a plugin crash");
+                }
+            }
+        }
+        check(networkCalls.get() == 0, "The plugin started an unusable QR flow");
+        HttpDiagnostics.reset();
+        // Scope the handoff to the provider's QR endpoints; ordinary drive requests still work.
+        for (String url : List.of("https://uop.quark.cn/cas/ajax/other", "https://source.example/cas/ajax/getTokenForQrcodeLogin")) {
+            HttpDiagnostics.execute(client.newCall(new Request.Builder().url(url).build())).close();
+        }
+        check(networkCalls.get() == 2, "Unrelated HTTP requests were intercepted");
+    }
+
+    private static void asyncCloudLoginEndsPlayback() throws Exception {
+        var executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+        // Like FTY's helper pool: created during initialization, before this playback request.
+        executor.submit(() -> {}).get();
+        HttpDiagnostics.singleSourceRuntime(true);
+        try {
+            PluginSession plugin = new PluginSession(new Spider() {
+                public String playerContent(String flag, String id, List<String> vip) throws Exception {
+                    executor.submit(() -> {
+                        try {
+                            HttpDiagnostics.execute(new OkHttpClient().newCall(new Request.Builder()
+                                .url("https://uop.quark.cn/cas/ajax/getTokenForQrcodeLogin").build()));
+                        } catch (java.io.IOException failure) { throw new RuntimeException(failure); }
+                    });
+                    long until = System.nanoTime() + 3_000_000_000L;
+                    while (System.nanoTime() < until) android.os.SystemClock.sleep(5);
+                    return "{}";
+                }
+            });
+            long started = System.nanoTime();
+            try { plugin.request(new JSONObject().put("play", "episode")); throw new AssertionError("Playback kept waiting for background QR login"); }
+            catch (HttpDiagnostics.CloudLoginRequired login) {
+                check(login.drive.equals("quark"), "Background login lost its provider");
+                check(System.nanoTime() - started < 1_000_000_000L, "Playback only failed after the poll timed out");
+            }
+            // The finished request's signal must not poison later plugin calls.
+            new PluginSession(new Spider() {
+                public String playerContent(String flag, String id, List<String> vip) {
+                    android.os.SystemClock.sleep(1); return "{}";
+                }
+            }).request(new JSONObject().put("play", "next"));
+        } finally { HttpDiagnostics.singleSourceRuntime(false); executor.shutdownNow(); }
     }
 
     private static void packageContextExists() throws Exception {

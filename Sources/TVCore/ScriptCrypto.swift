@@ -2,6 +2,7 @@ import Foundation
 import CommonCrypto
 import CryptoKit
 import Compression
+import Security
 
 /// Native AES, hashes and HMAC for scripts (`nativeCrypto` in the prelude). Pure-JavaScript
 /// crypto is too slow on QuickJS for multi-megabyte payloads such as bridge relays.
@@ -49,6 +50,12 @@ enum ScriptCrypto {
         let hex: ([UInt8]) -> String = { $0.map { String(format: "%02x", $0) }.joined() }
         let answer: [String: String]
         switch request["op"]?.string {
+        case "random":
+            guard let count = request["count"]?.int, (1...1024).contains(count) else { throw ScriptHostError("invalid random byte count") }
+            var data = Data(count: count)
+            let status = data.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, count, $0.baseAddress!) }
+            guard status == errSecSuccess else { throw ScriptHostError("random bytes unavailable") }
+            answer = ["data": data.base64EncodedString()]
         case "aes":
             let ecb = request["mode"]?.string?.uppercased() == "ECB"
             let encrypt = flag("encrypt", false)

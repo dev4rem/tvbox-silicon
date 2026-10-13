@@ -197,6 +197,7 @@ private actor SearchCollector {
     model.search("old", config: sub)
     let old = model.task
     model.search("new", config: sub)
+    #expect(old?.isCancelled == true)
     await old?.value
     await model.task?.value
     #expect(model.keyword == "new")
@@ -291,4 +292,78 @@ private final class OfflineProtocol: URLProtocol, @unchecked Sendable {
     // Page 4 repeats page 3: nothing new, so the source is done although it claimed four pages.
     model.loadMore("p", config: config); try await settle()
     #expect(!model.canLoadMore("p") && model.batches.count == 2)
+}
+
+@Test @MainActor func leavingCompletedSearchCancelsPaginationWithoutLosingItsCursor() async throws {
+    let base = URL(string: "https://example.com/config")!
+    let sub = try Subscription.parse(Data(#"{"sites":[{"key":"p","type":4,"api":"/paged"}]}"#.utf8), origin: base)
+    let model = SearchModel(http: client())
+    model.search("x", config: sub)
+    await model.task?.value
+    model.loadMore(nil, config: sub)
+    let oldPage = model.moreTask
+    model.suspend()
+    await oldPage?.value
+    #expect(!model.loadingMore)
+    #expect(model.batches.isEmpty)
+    #expect(model.canLoadMore(nil))
+    model.loadMore(nil, config: sub)
+    #expect(model.moreTask == nil) // A hidden scroll sentinel cannot restart pagination.
+    model.resumeSuspended(config: sub)
+    model.loadMore(nil, config: sub)
+    await model.moreTask?.value
+    #expect(model.batches.map(\.page) == [2])
+}
+
+@Test @MainActor func repeatedPageCancellationPreservesSearchForReturn() async throws {
+    let base = URL(string: "https://example.com/config")!
+    let sub = try Subscription.parse(Data(#"{"sites":[{"key":"a","type":4,"api":"/api"},{"key":"b","type":4,"api":"/api"}]}"#.utf8), origin: base)
+    let model = SearchModel(http: client())
+    model.search("x", config: sub)
+    let old = model.task
+    model.suspend() // Search page disappears.
+    model.suspend() // New page starts its request.
+    await old?.value
+    #expect(model.suspended && !model.busy)
+    model.resumeSuspended(config: sub)
+    await model.task?.value
+    #expect(model.completed == 2 && model.results.count == 2)
+}
+
+@Test @MainActor func explicitStopDoesNotResumeWhenEnteringDetail() async throws {
+    let base = URL(string: "https://example.com/config")!
+    let sub = try Subscription.parse(Data(#"{"sites":[{"key":"a","type":4,"api":"/api"}]}"#.utf8), origin: base)
+    let model = SearchModel(http: client())
+    model.search("x", config: sub)
+    let old = model.task
+    model.stop()
+    await old?.value
+    model.suspend()
+    model.resumeSuspended(config: sub)
+    #expect(!model.busy && model.results.isEmpty)
+}
+
+@Test @MainActor func confirmedNewSearchCancelsOldPaginationAndKeepsNewPageState() async throws {
+    let base = URL(string: "https://example.com/config")!
+    let sub = try Subscription.parse(Data(#"{"sites":[{"key":"p","type":4,"api":"/paged"}]}"#.utf8), origin: base)
+    let model = SearchModel(http: client())
+    model.search("old", config: sub)
+    await model.task?.value
+    model.loadMore(nil, config: sub)
+    let oldPage = model.moreTask
+    // Draft edits leave the confirmed search alone until the user submits.
+    model.draft = "new"
+    #expect(model.keyword == "old" && oldPage?.isCancelled == false)
+    model.search(model.draft, config: sub)
+    #expect(oldPage?.isCancelled == true)
+    #expect(!model.loadingMore && model.batches.isEmpty)
+    await model.task?.value
+    model.loadMore(nil, config: sub)
+    let newPage = model.moreTask
+    await oldPage?.value
+    await newPage?.value
+    #expect(model.keyword == "new")
+    #expect(model.batches.map(\.page) == [2])
+    #expect(model.videos(for: "p").map(\.id) == ["p1a", "p1b", "p2a", "p2b"])
+    #expect(!model.loadingMore)
 }

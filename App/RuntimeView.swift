@@ -9,17 +9,17 @@ struct RuntimeView: View {
     @State private var error: String?
     private let runtime = JarRuntime()
     var body: some View {
-        SettingsPage(title: L10n.text("JAR Runtime")) {
+        SettingsPage(title: L10n.text("JAR Runtime"), symbol: "cpu") {
             #if os(iOS) || os(tvOS)
             SettingsGroup(title: L10n.text("On-device Plugin Runtime"),
                           footer: L10n.text("Plugin sources run on this device without a server. First use prepares and caches the required classes. Some Android features are not supported.")) {
-                SettingsRow(symbol: "cpu.fill", tint: Brand.terracotta, title: L10n.text("Java Plugin Support"),
+                SettingsRow(symbol: "cpu.fill", tint: Brand.indigo, title: L10n.text("Java Plugin Support"),
                             subtitle: EmbeddedJarHost.available ? L10n.text("Installed · Experimental") : L10n.text("Not installed in this build"))
             }
             #endif
             SettingsGroup(title: L10n.text("Built-in Runtime · Experimental"),
                           footer: L10n.text("This small test checks basic DEX instructions. Open a source to test the full plugin runtime.")) {
-                SettingsRow(symbol: "cpu.fill", tint: Brand.terracotta, title: L10n.text("Run Built-in Test JAR"), subtitle: probeSummary) {
+                SettingsRow(symbol: "cpu.fill", tint: Brand.indigo, title: L10n.text("Run Built-in Test JAR"), subtitle: probeSummary) {
                     Button(L10n.text("Run Test")) { Task { await runProbe() } }.settingsButton().disabled(busy)
                 }
             }
@@ -32,7 +32,6 @@ struct RuntimeView: View {
                         Label(report.status != 0 ? report.message : L10n.text("This plugin requires Android native libraries"),
                               systemImage: "exclamationmark.triangle.fill")
                             .font(.callout).foregroundStyle(Brand.amber)
-                            .frame(maxWidth: .infinity, alignment: .leading).padding(14)
                     }
                 } else {
                     SettingsRow(symbol: "shippingbox.fill", tint: .gray, title: L10n.text("Import a subscription with a spider field first."))

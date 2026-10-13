@@ -71,7 +71,11 @@ public class PluginLoadingTest {
                     check(!response.has("error"),"In-process source failed: "+response);
                     check(new JSONObject(response.getString("result")).getJSONArray("list").length()==1,"In-process home lost videos");
                     input.put("params",new JSONObject().put("wd","中文😀搜索"));
-                    response=new JSONObject(InProcessHost.request(input.toString()));
+                    Files.delete(job.resolve("preparation-progress.json"));
+                    response=new JSONObject(java.util.concurrent.CompletableFuture.supplyAsync(() -> InProcessHost.request(input.toString())).get());
+                    JSONObject progress = new JSONObject(Files.readString(job.resolve("preparation-progress.json")));
+                    check(progress.getString("stage").equals("loading"), "Warm request did not publish execution progress on its own worker");
+                    check(progress.getInt("converted") == 0 && progress.getInt("reused") == 0, "Warm request inherited initialization counters");
                     check(new JSONObject(response.getString("result")).getJSONArray("list").getJSONObject(0).getString("vod_name").equals("中文😀搜索"),"In-process query lost Unicode");
                 }
             } finally { InProcessHost.closeAll(); }

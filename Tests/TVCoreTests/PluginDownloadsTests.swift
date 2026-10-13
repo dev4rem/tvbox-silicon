@@ -182,3 +182,24 @@ private final class TransferSamples: @unchecked Sendable {
     }
     #expect(samples.hasBytes)
 }
+
+@Test func pluginProgressObservesUpdatesAfterAnExistingStaleFile() async throws {
+    let origin = URL(string: "https://example.com/stale-progress")!
+    let site = Site(key: UUID().uuidString, name: "Test", type: 3, api: "csp_Test", raw: [:])
+    let progress = PluginPreparation(site: site, origin: origin)
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let file = directory.appendingPathComponent("progress.json")
+    try Data(#"{"stage":"converting","converted":99,"reused":0}"#.utf8).write(to: file)
+    try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-60)], ofItemAtPath: file.path)
+    progress.report(.queued)
+    let monitor = progress.observe(file)
+    defer { monitor.cancel(); progress.finish() }
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(PluginPreparation.snapshot(site: site, origin: origin)?.stage == .queued)
+    try Data(#"{"stage":"loading","converted":0,"reused":0,"host":"uop.quark.cn"}"#.utf8).write(to: file, options: .atomic)
+    try await eventually { PluginPreparation.snapshot(site: site, origin: origin)?.host == "uop.quark.cn" }
+    #expect(PluginPreparation.snapshot(site: site, origin: origin)?.stage == .loading)
+    #expect(PluginPreparation.snapshot(site: site, origin: origin)?.converted == 0)
+}

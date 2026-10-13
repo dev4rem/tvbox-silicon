@@ -41,7 +41,7 @@ public actor ScriptRuntime {
             return existing
         }
         let profile = ScriptAssets.profiles.appendingPathComponent(PluginChecksum.sha256(Data((site.key + "\n" + origin.absoluteString).utf8)), isDirectory: true)
-        let session = try await ScriptSession.start(api: scriptURL.absoluteString, key: site.key, ext: ext, profile: profile, label: site.key)
+        let session = try await ScriptSession.start(api: scriptURL.absoluteString, key: site.sourceKey, ext: ext, profile: profile, label: site.key)
         sessions[key] = session
         recent.append(key)
         while recent.count > Self.maximumSessions {

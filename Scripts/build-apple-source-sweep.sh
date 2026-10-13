@@ -17,7 +17,7 @@ OUT="$ROOT/build/AppleRuntime/$PLATFORM"
 WORK="$ROOT/build/apple-runtime"
 APP="$WORK/SourceSweep-$TARGET.app"
 mkdir -p "$APP"
-rsync -a "$OUT/Resources/lib/" "$APP/lib/"
+rsync -a --delete "$OUT/Resources/lib/" "$APP/lib/"
 rsync -a --delete "$OUT/Resources/JavaHost/" "$APP/JavaHost/"
 python3 - "$APP" "$FAMILY" "$WORK/SourceSweepMain.m" <<'PY'
 import pathlib,sys,plistlib

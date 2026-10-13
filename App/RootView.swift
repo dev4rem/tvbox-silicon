@@ -2,7 +2,7 @@ import SwiftUI
 import TVCore
 
 enum AppSection: String, CaseIterable, Identifiable, Hashable {
-    case home = "Watch Now", live = "Live TV", search = "Global Search", sites = "Sources", favorites = "Favorites", history = "Playback History", downloads = "Downloads", settings = "Settings", more = "More"
+    case home = "Watch Now", live = "Live TV", music = "Music", search = "Global Search", sites = "Sources", favorites = "Favorites", history = "Playback History", downloads = "Downloads", settings = "Settings", more = "More"
     var id: String { rawValue }
     var title: String { L10n.text(rawValue) }
     /// Where Software Update lives: Settings, or More when Settings is folded into it.
@@ -12,6 +12,7 @@ enum AppSection: String, CaseIterable, Identifiable, Hashable {
         case .home: "play.rectangle.fill"
         case .search: "magnifyingglass"
         case .live: "dot.radiowaves.left.and.right"
+        case .music: "music.note"
         case .sites: "square.grid.2x2.fill"
         case .favorites: "heart.fill"
         case .downloads: "arrow.down.circle.fill"
@@ -36,9 +37,9 @@ struct RootView: View {
     #endif
     private var tabs: [AppSection] {
         #if os(iOS)
-        if sizeClass == .compact { return [.home, .live, .search, .sites, .more] }
+        if sizeClass == .compact { return [.home, .live, .music, .search, .more] }
         #endif
-        return [.home, .live, .search, .sites, .history, .favorites, .downloads, .settings]
+        return [.home, .live, .music, .search, .sites, .history, .favorites, .downloads, .settings]
     }
     var body: some View {
         @Bindable var store = store
@@ -57,6 +58,18 @@ struct RootView: View {
             platformTabs
             #endif
         }
+        .onChange(of: store.section) { _, section in
+            if section != .search { store.searchModel.suspend() }
+        }
+        // A Baidu or Aliyun line waiting for its plugin's sign-in code to be scanned.
+        .sheet(item: Binding(get: { PluginSignIn.shared.prompt }, set: { if $0 == nil { PluginSignIn.shared.dismiss() } })) {
+            PluginSignInView(prompt: $0)
+        }
+        #if os(tvOS)
+        .fullScreenCover(isPresented: Binding(get: { store.music.presentsPlayer }, set: { store.music.presentsPlayer = $0 })) { MusicPlayerScreen() }
+        #endif
+        // A video and a song never play over each other.
+        .onChange(of: store.playing) { _, channel in if channel != nil { store.music.pause() } }
         .modifier(PlayerPresentation(playing: $store.playing))
         .updatePresentation(updates, playing: store.playing != nil)
         .alert(L10n.text("Unable to Complete"), isPresented: Binding(get: { store.error != nil }, set: { if !$0 { store.error = nil } })) {
@@ -66,7 +79,7 @@ struct RootView: View {
 
     #if !os(macOS)
     /// Sections a phone reaches through More.
-    private static let inMore: [AppSection] = [.history, .favorites, .downloads, .settings]
+    private static let inMore: [AppSection] = [.sites, .history, .favorites, .downloads, .settings]
     private var platformTabs: some View {
         @Bindable var store = store
         return TabView(selection: $store.section) {
@@ -77,6 +90,7 @@ struct RootView: View {
                                 content(.more).routeDestinations()
                                     .navigationDestination(for: AppSection.self) { destination in
                                         switch destination {
+                                        case .sites: SitesView()
                                         case .history: PlaybackHistoryView()
                                         case .favorites: FavoritesView()
                                         case .downloads: DownloadsView()
@@ -125,6 +139,7 @@ struct RootView: View {
         case .home: HomeView()
         case .search: GlobalSearchView()
         case .live: LiveView()
+        case .music: MusicView()
         case .sites: SitesView()
         case .favorites: FavoritesView()
         case .downloads: DownloadsView()
@@ -132,6 +147,7 @@ struct RootView: View {
         case .settings: SettingsView()
         case .more:
             List {
+                NavigationLink(value: AppSection.sites) { Label(AppSection.sites.title, systemImage: AppSection.sites.icon) }
                 NavigationLink(value: AppSection.history) { Label(AppSection.history.title, systemImage: AppSection.history.icon) }
                 NavigationLink(value: AppSection.favorites) { Label(AppSection.favorites.title, systemImage: AppSection.favorites.icon) }
                 NavigationLink(value: AppSection.downloads) { Label(AppSection.downloads.title, systemImage: AppSection.downloads.icon) }
@@ -176,7 +192,7 @@ private struct MacSidebar: View {
     @Environment(Store.self) private var store
     @Environment(Updates.self) private var updates
     private var groups: [(title: String, items: [AppSection])] {
-        [(L10n.text("Browse"), [.home, .search, .live, .sites]), (L10n.text("Library"), [.history, .favorites, .downloads, .settings])]
+        [(L10n.text("Browse"), [.home, .search, .live, .music, .sites]), (L10n.text("Library"), [.history, .favorites, .downloads, .settings])]
     }
 
     var body: some View {

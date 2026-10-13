@@ -13,7 +13,7 @@ import org.json.JSONObject;
  */
 public final class SharedPluginRuntime {
     private static final int SOURCE_LIMIT = 24;
-    private record Source(PluginSession session, CloudDriveBridge bridge, Path cache) {}
+    private record Source(PluginSession session, CloudDriveBridge bridge, Path cache, OpeningGate requests) {}
     private final NativeProbe.StandardRuntime runtime;
     private final LinkedHashMap<String, Source> sources = new LinkedHashMap<>(16, 0.75f, true);
     /** Requests in flight per source; a busy source is never evicted. Guarded by this. */
@@ -53,37 +53,64 @@ public final class SharedPluginRuntime {
         Path cache = Path.of(input.getString("cache"));
         Files.createDirectories(cache);
         PreparationProgress.begin(cache);
-        Source source;
-        synchronized (this) { source = claim(id); }
-        if (source == null) {
-            var cancelled = OpeningGate.cancelled(input);
-            // The viewer's own requests init their spider before waiting searches; an abandoned
-            // request stops waiting instead of creating a spider nobody wants.
-            opening.enter(OpeningGate.search(input), cancelled);
-            try {
-                synchronized (this) { source = claim(id); }
-                if (source == null) {
-                    // Make room first: spider init allocates, and a full heap fails it.
-                    synchronized (this) { if (HeapBudget.low()) release(false); }
-                    Source opened = openSource(input, cache);
-                    synchronized (this) {
-                        sources.put(id, opened);
-                        busy.merge(id, 1, Integer::sum);
-                        evict();
+        for (int attempt = 1; ; attempt++) {
+            Source source;
+            synchronized (this) { source = claim(id); }
+            if (source == null) {
+                var cancelled = OpeningGate.cancelled(input);
+                // The viewer's own requests init their spider before waiting searches; an abandoned
+                // request stops waiting instead of creating a spider nobody wants.
+                opening.enter(OpeningGate.search(input), cancelled);
+                try {
+                    synchronized (this) { source = claim(id); }
+                    if (source == null) {
+                        // Make room first: spider init allocates, and a full heap fails it.
+                        synchronized (this) { if (HeapBudget.low()) release(false); }
+                        Source opened = openSource(input, cache);
+                        synchronized (this) {
+                            sources.put(id, opened);
+                            busy.merge(id, 1, Integer::sum);
+                            evict();
+                        }
+                        source = opened;
                     }
-                    source = opened;
-                }
-            } finally { opening.leave(); }
-        }
-        try {
-            // A spider keeps per-source state (e.g. the detail loaded before playback).
-            synchronized (source) {
-                source.bridge().activate();
-                try { return source.session().request(input.getJSONObject("params")); }
-                finally { CloudDriveBridge.deactivate(); }
+                } finally { opening.leave(); }
             }
-        } finally {
-            synchronized (this) { busy.computeIfPresent(id, (key, count) -> count > 1 ? count - 1 : null); }
+            try {
+                // A spider keeps per-source state (e.g. the detail loaded before playback).
+                // Waiting searches must be cancellable too, even when this spider is already open.
+                // Detail/playback goes ahead of searches queued against the same source.
+                try { source.requests().enter(OpeningGate.search(input), OpeningGate.cancelled(input)); }
+                catch (OpeningGate.Stuck stuck) {
+                    // An earlier request still runs in this spider long after it was told to stop:
+                    // retire the spider (it closes when that request returns) and open a fresh one.
+                    if (attempt > 1) throw stuck;
+                    synchronized (this) { if (sources.get(id) == source) sources.remove(id); }
+                    source.requests().retire();
+                    System.err.println("PLUGIN_SOURCE_RETIRED " + java.time.LocalTime.now().withNano(0) + " " + input.optString("key"));
+                    continue;
+                }
+                try {
+                    source.bridge().activate();
+                    try { return source.session().request(input.getJSONObject("params")); }
+                    catch (HttpDiagnostics.SignedIn signedIn) {
+                        // The plugin's own sign-in completed; a fresh spider reads the saved account.
+                        if (attempt > 1) throw signedIn;
+                        synchronized (this) { if (sources.get(id) == source) sources.remove(id); }
+                        source.requests().retire();
+                        OpeningGate.freshDeadline(input);
+                        continue;
+                    }
+                    finally { CloudDriveBridge.deactivate(); }
+                } finally {
+                    source.requests().leave();
+                    if (source.requests().retired() && !streaming(source.cache())) {
+                        try { source.session().closeSource(); } catch (Exception error) { error.printStackTrace(System.err); }
+                    }
+                }
+            } finally {
+                synchronized (this) { busy.computeIfPresent(id, (key, count) -> count > 1 ? count - 1 : null); }
+            }
         }
     }
 
@@ -107,7 +134,7 @@ public final class SharedPluginRuntime {
             long start = System.nanoTime();
             var session = NativeProbe.createStandardSession(runtime, input, bridge, accounts);
             System.err.printf("PLUGIN_SOURCE_READY %s %.3fs %s%n", input.optString("key"), (System.nanoTime() - start) / 1e9, HeapBudget.describe());
-            return new Source(session, bridge, cache);
+            return new Source(session, bridge, cache, new OpeningGate(true));
         } catch (Throwable failure) {
             bridge.close();
             throw failure;
@@ -128,6 +155,25 @@ public final class SharedPluginRuntime {
 
     /** Closes every idle spider (the heap ran short or the OS asked for memory); returns how many. */
     public synchronized int trim() { return release(true); }
+
+    /** The drive file's CDN request; the probe runs outside this lock, it can take seconds. */
+    public String directMedia(String address) throws Exception {
+        CloudDriveBridge owner = null;
+        synchronized (this) {
+            for (Source source : sources.values()) {
+                if (source.bridge().recoverProxy(address) != null) { owner = source.bridge(); break; }
+            }
+        }
+        return owner == null ? null : owner.directMedia(address);
+    }
+
+    public synchronized String recoverProxy(String address) throws Exception {
+        for (Source source : sources.values()) {
+            String recovered = source.bridge().recoverProxy(address);
+            if (recovered != null) return recovered;
+        }
+        return null;
+    }
 
     /**
      * Closes idle spiders, least recently used first: all of them, or only until the heap has its

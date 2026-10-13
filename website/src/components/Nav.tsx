@@ -9,7 +9,6 @@ export function Nav() {
       <div className="nav-inner">
         <Brand />
         <nav className="nav-links">
-          <a href="#new">{t("nav.new")}</a>
           <a href="#features">{t("nav.features")}</a>
           <a href="#install">{INSTALL[lang].nav}</a>
           <a href="#faq">{t("nav.faq")}</a>

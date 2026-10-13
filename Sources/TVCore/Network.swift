@@ -41,24 +41,9 @@ public struct HTTPClient: Sendable {
         }
     }
     public func channels(_ source: LiveSource) async throws -> [Channel] {
-        if source.isBuiltIn { return try await BilibiliLive.channels() }
+        if let platform = source.platform { return try await LiveCatalog.channels(platform) }
         let (data, finalURL) = try await get(source.url, headers: source.headers)
         guard let text = String(data: data, encoding: .utf8) else { throw TVError.unsupported(L10n.text("Live playlists must use UTF-8 encoding.")) }
         return try Playlist.parse(text, origin: finalURL, headers: source.headers)
-    }
-
-    /// First non-whitespace byte decides the error path: `{`/`[` is TVBox JSON
-    /// (even when invalid), anything else may be an M3U/TXT playlist.
-    private static func looksLikeJSON(_ data: Data) -> Bool {
-        for byte in data {
-            switch byte {
-            case 9, 10, 13, 32: continue
-            case 0xEF: continue // Allow a UTF-8 BOM before the document.
-            case 0xBB, 0xBF: continue
-            case 123, 91: return true // { or [
-            default: return false
-            }
-        }
-        return false
     }
 }

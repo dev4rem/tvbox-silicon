@@ -19,14 +19,35 @@ public final class PluginSession {
         this.spider = spider; this.initializationWarning = initializationWarning; this.bridge = bridge;
     }
 
+    public String recoverProxy(String address) throws Exception {
+        return bridge == null ? null : bridge.recoverProxy(address);
+    }
+
+    public String directMedia(String address) throws Exception {
+        return bridge == null ? null : bridge.directMedia(address);
+    }
+
+    /**
+     * {@code _stopAt} (set by the host) is when the request must end: the app abandoned it, or
+     * {@code _deadline} seconds passed once the spider started working on it.
+     */
     public String request(JSONObject params) throws Exception {
+        var stopAt = params.opt("_stopAt") instanceof java.util.concurrent.atomic.AtomicLong value ? value : new java.util.concurrent.atomic.AtomicLong();
+        long seconds = params.optLong("_deadline", 0);
+        if (seconds > 0) {
+            long deadline = System.currentTimeMillis() + seconds * 1000;
+            stopAt.accumulateAndGet(deadline, (current, next) -> current == 0 ? next : Math.min(current, next));
+        }
+        String kind = params.has("play") ? "play flag=" + params.optString("flag") : params.has("ids") ? "detail"
+            : params.has("wd") ? "search" : params.has("t") ? "category" : "home";
+        System.err.println("PLUGIN_REQUEST " + java.time.LocalTime.now().withNano(0) + " " + kind + " deadline=" + seconds + "s");
+        HttpDiagnostics.beginRequest(params.has("play"), stopAt, params.optString("_folder", null));
         PreparationProgress.loading();
         try { return performRequest(params); }
-        finally { PreparationProgress.loading(); } // Flush the final throttled counters, also on failure.
+        finally { PreparationProgress.loading(); HttpDiagnostics.endRequest(); } // Flush the final throttled counters, also on failure.
     }
 
     private String performRequest(JSONObject params) throws Exception {
-        HttpDiagnostics.reset();
         if (params.has("play")) {
             String required = params.optString("detailID", "");
             if (!required.isEmpty() && !required.equals(detailID)) {
@@ -80,12 +101,16 @@ public final class PluginSession {
             HttpDiagnostics.throwIfFailed();
             throw malformed;
         }
+        // A spider may swallow even a host handoff and return empty/partial content.
+        HttpDiagnostics.throwIfLoginRequired();
         if (result != null && !result.isBlank()) {
             if (checkInitialization && initializationWarning != null && emptyAllowed) checkInitialization(new JSONObject(result));
             return result;
         }
         // Empty home/category/search is valid for search-only or utility spiders.
-        // Preserve remote failures instead of disguising them as an empty catalog.
+        // Preserve remote failures instead of disguising them as an empty catalog. A spider that
+        // caught the host's stop returns nothing: report the stop, not an empty answer.
+        HttpDiagnostics.throwIfStopped();
         HttpDiagnostics.throwIfFailed();
         if (checkInitialization && initializationWarning != null) checkInitialization(new JSONObject());
         if (emptyAllowed) return "{}";

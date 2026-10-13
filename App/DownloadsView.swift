@@ -173,7 +173,7 @@ private struct StorageCard: View {
                     let width = proxy.size.width
                     let share = { (bytes: Int64) in width * CGFloat(Double(bytes) / Double(capacity)) }
                     HStack(spacing: 2) {
-                        Rectangle().fill(Brand.accent).frame(width: usage.downloads > 0 ? max(4, share(usage.downloads)) : 0)
+                        Rectangle().fill(Brand.cyan).frame(width: usage.downloads > 0 ? max(4, share(usage.downloads)) : 0)
                         Rectangle().fill(Color.primary.opacity(0.28)).frame(width: share(other))
                         Rectangle().fill(Color.primary.opacity(0.08))
                     }
@@ -182,7 +182,7 @@ private struct StorageCard: View {
                 .frame(height: DownloadMetrics.thumb > 60 ? 16 : 10)
                 .accessibilityHidden(true)
                 HStack(spacing: 18) {
-                    legend(Brand.accent, L10n.text("Downloads"), usage.downloads)
+                    legend(Brand.cyan, L10n.text("Downloads"), usage.downloads)
                     legend(Color.primary.opacity(0.28), L10n.text("Other"), other)
                     legend(Color.primary.opacity(0.12), L10n.text("Free"), free)
                 }
@@ -356,7 +356,7 @@ struct DownloadedBadge: View {
     var body: some View {
         Image(systemName: "arrow.down.circle.fill")
             .font(.system(size: DownloadMetrics.thumb > 60 ? 22 : 12, weight: .semibold))
-            .foregroundStyle(.white, Brand.accent)
+            .foregroundStyle(Brand.onAccent, Brand.accent)
             .offset(x: 4, y: -4)
             .accessibilityLabel(L10n.text("Downloaded"))
     }

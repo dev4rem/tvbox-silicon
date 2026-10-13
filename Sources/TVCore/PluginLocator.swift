@@ -23,16 +23,18 @@ public struct PluginClassMissing: LocalizedError, Sendable {
 }
 
 extension Subscription {
-    /// Every plugin archive the subscription names, most used first.
+    /// Every plugin archive the subscription names, most used first; merged sources name their own.
     public var pluginArchives: [URL] {
         var uses: [URL: Int] = [:]
         var order: [URL] = []
         for site in sites where site.runtime == .jar {
-            guard let url = try? site.pluginURL(origin: origin, fallback: spiderURL) else { continue }
+            guard let url = try? site.pluginURL(origin: site.origin(or: origin), fallback: site.spider(or: spiderURL)) else { continue }
             if uses[url] == nil { order.append(url) }
             uses[url, default: 0] += 1
         }
-        if let spider = spiderURL, uses[spider] == nil { order.append(spider) }
+        for spider in [spiderURL] + sites.map({ $0.spider(or: spiderURL) }) {
+            if let spider, uses[spider] == nil { uses[spider] = 0; order.append(spider) }
+        }
         return order.enumerated().sorted { (uses[$0.element] ?? 0, -$0.offset) > (uses[$1.element] ?? 0, -$1.offset) }.map(\.element)
     }
 }

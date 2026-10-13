@@ -16,6 +16,8 @@ final class SerializedPluginWorker: @unchecked Sendable {
         let id = UUID().uuidString
         let queued = ContinuousClock.now
         var waiters: [UUID: CheckedContinuation<String, Error>] = [:]
+        var startHandlers: [UUID: @Sendable () -> Void] = [:]
+        var started = false
         init(resources: String, json: String, search: Bool) {
             self.resources = resources; self.json = json; self.search = search
         }
@@ -40,7 +42,7 @@ final class SerializedPluginWorker: @unchecked Sendable {
         self.abandon = abandon; self.execute = execute
     }
 
-    func request(resources: String, json: String, search: Bool = false) async throws -> String {
+    func request(resources: String, json: String, search: Bool = false, onStart: (@Sendable () -> Void)? = nil) async throws -> String {
         let id = UUID()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
@@ -49,9 +51,13 @@ final class SerializedPluginWorker: @unchecked Sendable {
                     lock.unlock(); continuation.resume(throwing: CancellationError()); return
                 }
                 // Join before checking queue capacity. A duplicate consumes no slot.
-                if let matching = (running + pending).first(where: { $0.resources == resources && $0.json == json }) {
+                if let matching = (running + pending).first(where: { !$0.waiters.isEmpty && $0.resources == resources && $0.json == json }) {
                     matching.waiters[id] = continuation
-                    lock.unlock(); return
+                    let started = matching.started
+                    if !started { matching.startHandlers[id] = onStart }
+                    lock.unlock()
+                    if started { onStart?() }
+                    return
                 }
                 // A search burst may briefly queue a full width.
                 let queued = pending.count(where: { $0.search == search })
@@ -62,7 +68,7 @@ final class SerializedPluginWorker: @unchecked Sendable {
                     continuation.resume(throwing: TVError.unsupported("The plugin runtime is busy. Wait for the current source.")); return
                 }
                 let work = Work(resources: resources, json: json, search: search)
-                work.waiters[id] = continuation; pending.append(work)
+                work.waiters[id] = continuation; work.startHandlers[id] = onStart; pending.append(work)
                 scheduleLocked()
                 lock.unlock()
             }
@@ -75,11 +81,12 @@ final class SerializedPluginWorker: @unchecked Sendable {
         var abandoned: Work?
         for work in running where waiter == nil {
             waiter = work.waiters.removeValue(forKey: id)
+            work.startHandlers[id] = nil
             if waiter != nil, work.waiters.isEmpty { abandoned = work }
         }
         if waiter == nil {
             for work in pending {
-                if let removed = work.waiters.removeValue(forKey: id) { waiter = removed; break }
+                if let removed = work.waiters.removeValue(forKey: id) { work.startHandlers[id] = nil; waiter = removed; break }
             }
             pending.removeAll { $0.waiters.isEmpty }
             scheduleLocked()
@@ -93,14 +100,28 @@ final class SerializedPluginWorker: @unchecked Sendable {
     }
 
     /// A slow call (first preparation, heavy plugin crypto on the interpreter) is not a stuck
-    /// runtime: fail only its callers. It keeps its slot until Java returns, so widths stay honest.
+    /// runtime: fail only its callers. It keeps its slot until Java returns, so widths stay honest,
+    /// and the host hears `cancel`, which stops the plugin at its next wait.
     private func expire(_ work: Work) {
         lock.lock()
         guard running.contains(where: { $0 === work }) else { lock.unlock(); return }
         let waiters = Array(work.waiters.values); work.waiters.removeAll()
         lock.unlock()
-        Diagnostics.shared.record(.warning, "jar.timing", "search=\(work.search) timed out after \(Int(timeout))s; its slot stays busy until the plugin returns")
+        Diagnostics.shared.record(.warning, "jar.timing", "search=\(work.search) timed out after \(Int(timeout))s; asked the plugin to stop")
         for waiter in waiters { waiter.resume(throwing: TVError.unsupported("The source took too long to respond.")) }
+        if let abandon { DispatchQueue.global(qos: .utility).async { abandon(work.resources, work.id) } }
+    }
+
+    /// A host command that never enters a plugin's request queue (the CDN address behind a drive
+    /// proxy, reopening a proxy). Playback needs it at once, so it never waits behind plugin calls.
+    func immediate(resources: String, json: String) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            let thread = Thread { [execute] in continuation.resume(with: execute(resources, json)) }
+            thread.name = "On-device plugins (host command)"
+            thread.qualityOfService = .userInitiated
+            thread.stackSize = 8 * 1024 * 1024
+            thread.start()
+        }
     }
 
     /// Starts queued work in arrival order within each lane. Call with `lock` held.
@@ -124,6 +145,12 @@ final class SerializedPluginWorker: @unchecked Sendable {
 
     private func perform(_ work: Work) {
         let began = ContinuousClock.now
+        lock.lock()
+        work.started = true
+        let startHandlers = Array(work.startHandlers.values); work.startHandlers.removeAll()
+        lock.unlock()
+        // Only native execution moves a caller out of the Swift queue, including joined callers.
+        for handler in startHandlers { handler() }
         let timer = DispatchWorkItem { [self, work] in expire(work) }
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timer)
         let result = execute(work.resources, abandon == nil ? work.json : Self.tagged(work.json, id: work.id))

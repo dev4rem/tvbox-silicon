@@ -110,8 +110,9 @@ public struct CatalogClient: Sendable {
     public let jarURL: URL?
     /// The subscription's parse services, used when a source hands back a web player page.
     public private(set) var parses: [ParseService] = []
+    /// A merged source runs against its own subscription, whatever `origin` and `jarURL` the caller has.
     public init(site: Site, origin: URL, http: HTTPClient = HTTPClient(), jarURL: URL? = nil) {
-        self.site = site; self.origin = origin; self.http = http; self.jarURL = jarURL
+        self.site = site; self.origin = site.origin(or: origin); self.http = http; self.jarURL = site.spider(or: jarURL)
     }
     public func with(parses: [ParseService]) -> CatalogClient {
         var client = self; client.parses = parses; return client
@@ -129,7 +130,19 @@ public struct CatalogClient: Sendable {
         guard let url = parts.url else { throw TVError.invalidURL }
         return url
     }
+    /// Every answer, or failure, feeds the source's `SourceHealth`.
     private func request(_ params: [String: String]) async throws -> [String: JSONValue] {
+        let started = ContinuousClock.now
+        do {
+            let json = try await perform(params)
+            await SourceHealth.shared.record(site, origin: origin, seconds: started.duration(to: .now).seconds, error: nil)
+            return json
+        } catch {
+            if !Task.isCancelled { await SourceHealth.shared.record(site, origin: origin, seconds: started.duration(to: .now).seconds, error: error) }
+            throw error
+        }
+    }
+    private func perform(_ params: [String: String]) async throws -> [String: JSONValue] {
         // A bundled lite port runs first, in-process on QuickJS everywhere; when it fails or answers
         // with nothing usable, the source's JAR spider answers instead.
         if let script = site.liteScript, ScriptRuntime.available, await LiteFallback.shared.prefersPort(site.key) {
@@ -221,7 +234,7 @@ public struct CatalogClient: Sendable {
         return CatalogPage(json: try await request(params), origin: origin)
     }
     public func detail(_ id: String, cached: Bool = false) async throws -> Video {
-        let scope = EpisodeSkipSettings.scope(origin: origin, source: site.key, video: id)
+        let scope = EpisodeSkipSettings.scope(origin: origin, source: site.sourceKey, video: id)
         if cached, let data = MediaCache.shared.data(for: "detail", kind: .catalog, scope: scope),
            let video = try? JSONDecoder().decode(Video.self, from: data), video.id == id { return video }
         var json = try await request(["ac": "detail", "ids": id])
@@ -241,7 +254,7 @@ public struct CatalogClient: Sendable {
         return try await resolvePlayback(plan, choice: plan.choices[0])
     }
 
-    public func preparePlayback(_ episode: Episode) async throws -> PlaybackPlan {
+    public func preparePlayback(_ episode: Episode, forDownload: Bool = false) async throws -> PlaybackPlan {
         var headers = site.raw["header"]?.object?.compactMapValues(\.string) ?? [:]
         if site.type == 4 || site.type == 3 {
             var params = ["play": episode.address, "flag": episode.flag]
@@ -253,8 +266,24 @@ public struct CatalogClient: Sendable {
                     let fields = try? JSONDecoder().decode([String: String].self, from: data) { headers.merge(fields) { _, new in new } }
             if let ua = result["UA"]?.string ?? result["ua"]?.string, !ua.isEmpty { headers["User-Agent"] = ua }
             let prefix = result["playUrl"]?.string ?? ""
-            let choices = PlaybackChoice.parse(result["url"], prefix: prefix, fallbackName: episode.name)
+            var choices = PlaybackChoice.parse(result["url"], prefix: prefix, fallbackName: episode.name)
             guard !choices.isEmpty else { throw TVError.unsupported(L10n.text("The API did not return a single playback URL.")) }
+            if site.key == Hongguo.siteKey, let key = result["hongguoKey"]?.string, !key.isEmpty {
+                do {
+                    let remote = try WebAddress.resolve(choices[0].address)
+                    let address: URL
+                    if forDownload {
+                        address = try await HongguoMedia.shared.prepare(url: remote, key: key, headers: headers, http: http)
+                    } else {
+                        address = try HongguoStreams.register(url: remote, key: key, headers: headers, http: http)
+                    }
+                    choices = [PlaybackChoice(id: 0, name: episode.name, address: address.absoluteString)]
+                    headers = [:]
+                } catch {
+                    if error is CancellationError || Task.isCancelled { throw CancellationError() }
+                    throw TVError.unsupported(L10n.text("This Hongguo video could not be prepared for playback. Please try again."))
+                }
+            }
             return PlaybackPlan(choices: choices, headers: headers, group: episode.flag,
                                 requiresWebDetection: (result["parse"]?.int ?? 0) != 0 || (result["jx"]?.int ?? 0) != 0 || !prefix.isEmpty)
         }
@@ -263,6 +292,9 @@ public struct CatalogClient: Sendable {
     }
 
     public func resolvePlayback(_ plan: PlaybackPlan, choice: PlaybackChoice) async throws -> Channel {
+        if site.key == Hongguo.siteKey, let url = URL(string: choice.address), url.scheme == HongguoStreams.scheme {
+            return Channel(name: choice.name, group: plan.group, url: url, headers: [:])
+        }
         guard !plan.requiresWebDetection || Self.isDirectMedia(choice.address) else {
             if let found = await WebPlayback.resolve(page: choice.address, headers: plan.headers, parses: parses, http: http) {
                 return Channel(name: choice.name, group: plan.group, url: found.url, headers: found.headers)

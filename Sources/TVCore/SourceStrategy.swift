@@ -7,21 +7,26 @@ import Foundation
 /// this platform can run are kept. Channels are ordered by their cheapest runtime (`SourceRuntime`),
 /// then by first appearance in the subscription; inside a channel, sources are ordered by runtime and
 /// then subscription order, so a channel reads JSON a, JSON b, Python a, Python b, JS a, ..., JAR b.
+/// With `failing` (search passes `SourceHealth`), a channel whose every source fails goes last, and
+/// inside a channel failing sources follow the others.
 public enum SourceStrategy {
-    public static func arrange(_ sites: [Site], where available: (Site) -> Bool) -> [Site] {
+    public static func arrange(_ sites: [Site], where available: (Site) -> Bool, failing: (Site) -> Bool = { _ in false }) -> [Site] {
         let usable = sites.filter(available)
-        var channels: [String: (rank: Int, first: Int)] = [:]
+        let down = usable.map(failing)
+        var channels: [String: (rank: Int, first: Int, down: Bool)] = [:]
         let keys = usable.map { channel(of: $0.name) }
         for (index, site) in usable.enumerated() {
             let key = keys[index]
             let rank = site.preferredRuntime.rawValue
-            if let known = channels[key] { channels[key] = (min(known.rank, rank), known.first) }
-            else { channels[key] = (rank, index) }
+            if let known = channels[key] { channels[key] = (min(known.rank, rank), known.first, known.down && down[index]) }
+            else { channels[key] = (rank, index, down[index]) }
         }
         return usable.indices.sorted { lhs, rhs in
             let left = channels[keys[lhs]]!, right = channels[keys[rhs]]!
+            if left.down != right.down { return right.down }
             if left.rank != right.rank { return left.rank < right.rank }
             if left.first != right.first { return left.first < right.first }
+            if down[lhs] != down[rhs] { return down[rhs] }
             let leftRuntime = usable[lhs].preferredRuntime.rawValue, rightRuntime = usable[rhs].preferredRuntime.rawValue
             return leftRuntime != rightRuntime ? leftRuntime < rightRuntime : lhs < rhs
         }.map { usable[$0] }

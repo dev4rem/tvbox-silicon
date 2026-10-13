@@ -2,51 +2,32 @@ import SwiftUI
 import TVCore
 
 // MARK: Settings building blocks
-// Grouped rows in the style of System Settings: a section title, a rounded group with
-// hairline separators, and an optional footnote.
+// The pages under Settings are built from these, so they match the Settings page itself: the
+// system's grouped form on iPhone, iPad and Mac, and on Apple TV a page like the TV's own Settings
+// subpages, with a symbol and title on the left and sections of rows on the right.
 
+/// A titled run of rows with an optional note under it.
 struct SettingsGroup<Content: View>: View {
     var title: String? = nil
     var footer: String? = nil
     @ViewBuilder var content: Content
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let title {
-                Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-                    .padding(.horizontal, 4).accessibilityAddTraits(.isHeader)
-            }
-            VStack(spacing: 0) {
-                Group(subviews: content) { rows in
-                    ForEach(rows) { row in
-                        row
-                        if row.id != rows.last?.id { Divider().padding(.leading, 14) }
-                    }
-                }
-            }
-            .background(SettingsStyle.groupFill, in: RoundedRectangle(cornerRadius: SettingsStyle.radius, style: .continuous))
-            .overlay { RoundedRectangle(cornerRadius: SettingsStyle.radius, style: .continuous).strokeBorder(Color.primary.opacity(0.06)) }
-            .clipShape(RoundedRectangle(cornerRadius: SettingsStyle.radius, style: .continuous))
-            if let footer {
-                Text(footer).font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 4)
-            }
+        #if os(tvOS)
+        TVSettingsSection(title: title, footer: footer) { content }
+        #else
+        Section {
+            content
+        } header: {
+            if let title { Text(title) }
+        } footer: {
+            if let footer { Text(footer) }
         }
+        #endif
     }
 }
 
-enum SettingsStyle {
-    static let radius: CGFloat = 12
-    static let groupFill = Color.primary.opacity(0.05)
-    #if os(tvOS)
-    static let rowHeight: CGFloat = 88
-    static let icon: CGFloat = 48, iconSymbol: CGFloat = 24, chevron: CGFloat = 22, field: CGFloat = 66
-    #else
-    static let rowHeight: CGFloat = 52
-    static let icon: CGFloat = 28, iconSymbol: CGFloat = 13, chevron: CGFloat = 12, field: CGFloat = 36
-    #endif
-}
-
-/// Icon tile, title, optional subtitle and a trailing accessory.
+/// Icon tile, title, optional subtitle and a trailing accessory. On Apple TV the row goes without
+/// the tile, as rows do in the TV's own Settings.
 struct SettingsRow<Trailing: View>: View {
     let symbol: String
     var tint: Color = .gray
@@ -54,24 +35,23 @@ struct SettingsRow<Trailing: View>: View {
     var subtitle: String? = nil
     @ViewBuilder var trailing: Trailing
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: symbol)
-                .font(.system(size: SettingsStyle.iconSymbol, weight: .semibold)).foregroundStyle(.white)
-                .frame(width: SettingsStyle.icon, height: SettingsStyle.icon)
-                .background(tint.gradient, in: RoundedRectangle(cornerRadius: SettingsStyle.icon * 0.25, style: .continuous))
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.body).foregroundStyle(.primary).lineLimit(2)
+        #if os(tvOS)
+        HStack(spacing: 18) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.system(size: 29, weight: .medium)).lineLimit(2)
                 if let subtitle, !subtitle.isEmpty {
-                    Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    Text(subtitle).font(.system(size: 23)).foregroundStyle(.secondary).lineLimit(3)
                 }
             }
-            Spacer(minLength: 12)
+            Spacer(minLength: 32)
             trailing
         }
-        .padding(.horizontal, 14).padding(.vertical, 8)
-        .frame(minHeight: SettingsStyle.rowHeight)
-        .contentShape(Rectangle())
+        // The insets of a `glassRow()`, so static rows line up with the rows that can be selected.
+        .padding(.horizontal, 28).padding(.vertical, 12)
+        .frame(maxWidth: .infinity, minHeight: 76, alignment: .leading)
+        #else
+        LabeledContent { trailing } label: { FormLabel(symbol: symbol, tint: tint, title: title, subtitle: subtitle) }
+        #endif
     }
 }
 
@@ -81,7 +61,7 @@ extension SettingsRow where Trailing == EmptyView {
     }
 }
 
-/// A row that opens a subpage, with a chevron and hover highlight.
+/// A row that opens a subpage.
 struct SettingsLinkRow<Destination: View>: View {
     let symbol: String
     var tint: Color = .gray
@@ -89,207 +69,425 @@ struct SettingsLinkRow<Destination: View>: View {
     var subtitle: String? = nil
     @ViewBuilder var destination: () -> Destination
     var body: some View {
-        let link = RouteLink(destination: destination) {
-            SettingsRow(symbol: symbol, tint: tint, title: title, subtitle: subtitle) {
-                Image(systemName: "chevron.right").font(.system(size: SettingsStyle.chevron, weight: .semibold)).foregroundStyle(.tertiary)
-            }
-        }
         #if os(tvOS)
-        link
+        TVSettingsLink(title: title, value: subtitle, destination: destination)
         #else
-        link.buttonStyle(SettingsRowStyle())
+        RouteLink(destination: destination) { FormLabel(symbol: symbol, tint: tint, title: title, subtitle: subtitle) }
+        #endif
+    }
+}
+
+/// A row that does something in place, such as clearing the cache: the whole row is the button.
+struct SettingsActionRow: View {
+    let title: String
+    var destructive = false
+    let action: () -> Void
+    var body: some View {
+        #if os(tvOS)
+        TVSettingsAction(title: title, destructive: destructive, action: action)
+        #else
+        Button(title, role: destructive ? .destructive : nil, action: action).formRowButton()
+        #endif
+    }
+}
+
+extension View {
+    /// Buttons inside settings rows: the TV's control style, and the system's bordered buttons in
+    /// the system accent elsewhere, as in System Settings and the Settings app.
+    @ViewBuilder func settingsButton(prominent: Bool = false) -> some View {
+        #if os(tvOS)
+        controlButton(prominent: prominent)
+        #elseif os(iOS)
+        if prominent { buttonStyle(.borderedProminent).buttonBorderShape(.capsule).tint(systemAccent) }
+        else { buttonStyle(.bordered).buttonBorderShape(.capsule).tint(systemAccent) }
+        #else
+        if prominent { buttonStyle(.borderedProminent).tint(systemAccent) } else { buttonStyle(.bordered) }
         #endif
     }
 }
 
 #if !os(tvOS)
-struct SettingsRowStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View { Highlight(configuration: configuration) }
-    private struct Highlight: View {
-        let configuration: ButtonStyleConfiguration
-        @State private var hovering = false
-        var body: some View {
-            configuration.label
-                .background(Color.primary.opacity(configuration.isPressed ? 0.08 : (hovering ? 0.04 : 0)))
-                .onHover { hovering = $0 }
-        }
-    }
-}
-
-/// Compact capsule buttons used inside settings groups.
-struct SettingsButtonStyle: ButtonStyle {
-    var prominent = false
-    @Environment(\.isEnabled) private var enabled
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13, weight: .semibold))
-            .lineLimit(1)
-            .foregroundStyle(prominent ? Brand.onAccent : Color.primary)
-            .padding(.horizontal, 14)
-            .frame(minHeight: 30)
-            .background(prominent ? AnyShapeStyle(Brand.accent) : AnyShapeStyle(Color.primary.opacity(0.08)), in: Capsule())
-            .contentShape(Capsule())
-            .opacity(enabled ? (configuration.isPressed ? 0.75 : 1) : 0.4)
-    }
+/// The system's accent, not the app's: `Color.accentColor` follows the app-wide tint here.
+var systemAccent: Color {
+    #if os(macOS)
+    Color(nsColor: .controlAccentColor)
+    #else
+    Color(uiColor: .systemBlue)
+    #endif
 }
 #endif
 
-extension View {
-    @ViewBuilder func settingsButton(prominent: Bool = false) -> some View {
+/// A page under Settings. `symbol` and `subtitle` lead the page on Apple TV.
+struct SettingsPage<Content: View>: View {
+    let title: String
+    var symbol = "gearshape"
+    var subtitle: String? = nil
+    @ViewBuilder var content: Content
+    var body: some View {
         #if os(tvOS)
-        controlButton(prominent: prominent)
+        TVSettingsSubpage(symbol: symbol, title: title, subtitle: subtitle) { content }
         #else
-        buttonStyle(SettingsButtonStyle(prominent: prominent))
+        Form { content }.settingsForm(title)
         #endif
     }
 }
 
-struct SettingsField: View {
-    let prompt: String
-    @Binding var text: String
-    var body: some View {
-        TextField(prompt, text: $text)
-            .textFieldStyle(.plain)
-            .autocorrectionDisabled()
-            #if os(iOS)
-            .textInputAutocapitalization(.never).keyboardType(.URL)
-            #endif
-            .padding(.horizontal, 12).frame(minHeight: SettingsStyle.field)
-            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay { RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.primary.opacity(0.08)) }
-    }
-}
-
-/// Settings subpages share width, spacing and background.
-struct SettingsPage<Content: View>: View {
-    let title: String
-    @ViewBuilder var content: Content
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 26) { content }
-                .frame(maxWidth: Layout.settingsWidth).frame(maxWidth: .infinity)
-                .padding(Layout.gutter)
-        }
-        .screenBackdrop()
-        .screenTitle(title, width: Layout.settingsWidth)
-    }
+/// The panel around the diagnostic log list.
+enum SettingsStyle {
+    static let radius: CGFloat = 12
+    static let groupFill = Color.primary.opacity(0.05)
 }
 
 // MARK: Settings
 
 struct SettingsView: View {
+    var body: some View {
+        #if os(tvOS)
+        TVSettingsView()
+        #else
+        FormSettingsView()
+        #endif
+    }
+}
+
+#if !os(tvOS)
+// MARK: Settings on iPhone, iPad and Mac
+// A native grouped form, as in the Settings app and System Settings: the app as the first card,
+// icon-led rows that show their current value, switches in place, and subpages for the rest.
+
+private enum FormMetrics {
+    #if os(macOS)
+    static let icon: CGFloat = 22, symbol: CGFloat = 11, hero: CGFloat = 52
+    #else
+    static let icon: CGFloat = 30, symbol: CGFloat = 15, hero: CGFloat = 64
+    #endif
+}
+
+/// The coloured tile that leads a row.
+struct SettingsIcon: View {
+    let symbol: String
+    var tint: Color = .gray
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: FormMetrics.symbol, weight: .semibold)).foregroundStyle(.white)
+            .frame(width: FormMetrics.icon, height: FormMetrics.icon)
+            .background(tint.gradient, in: RoundedRectangle(cornerRadius: FormMetrics.icon * 0.26, style: .continuous))
+            .accessibilityHidden(true)
+    }
+}
+
+/// Icon tile, title and an optional second line.
+struct FormLabel: View {
+    let symbol: String
+    var tint: Color = .gray
+    let title: String
+    var subtitle: String? = nil
+    var body: some View {
+        Label {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                if let subtitle, !subtitle.isEmpty { Text(subtitle).font(.caption).foregroundStyle(.secondary) }
+            }
+        } icon: { SettingsIcon(symbol: symbol, tint: tint) }
+    }
+}
+
+/// A row that opens a page, with its current value before the chevron.
+struct FormLink<Destination: View>: View {
+    let symbol: String
+    var tint: Color = .gray
+    let title: String
+    var value: String? = nil
+    var warning = false
+    @ViewBuilder var destination: () -> Destination
+    var body: some View {
+        RouteLink(destination: destination) {
+            LabeledContent {
+                if let value, !value.isEmpty {
+                    Text(value).lineLimit(1).foregroundStyle(warning ? AnyShapeStyle(Brand.amber) : AnyShapeStyle(.secondary))
+                }
+            } label: { FormLabel(symbol: symbol, tint: tint, title: title) }
+        }
+    }
+}
+
+extension View {
+    /// A button that fills its row: tinted text on iPhone, a plain clickable row on the Mac, where a
+    /// form would otherwise draw a push button around the whole label.
+    @ViewBuilder func formRowButton() -> some View {
+        #if os(macOS)
+        buttonStyle(.plain).contentShape(Rectangle())
+        #else
+        self
+        #endif
+    }
+    /// Settings as the system draws them, like System Settings and the Settings app: the system's
+    /// grouped background and row fills, and the system accent on switches and buttons instead of
+    /// the app's neutral one. The scroll view spans the page and margins centre the rows; a narrowed
+    /// frame left the toolbar's scroll edge as a band over the middle column only.
+    func settingsForm(_ title: String) -> some View {
+        GeometryReader { proxy in
+            let extra = (proxy.size.width - Layout.settingsWidth) / 2
+            let form = formStyle(.grouped).tint(systemAccent)
+            // Only when there is room to spare: a zero margin would replace the system's own insets.
+            if extra > 0 { form.contentMargins(.horizontal, extra, for: .scrollContent) } else { form }
+        }
+        .screenTitle(title, width: Layout.settingsWidth)
+    }
+    /// Switches in the system's own colour: green on iPhone and iPad, the accent on the Mac.
+    @ViewBuilder func settingsSwitch() -> some View {
+        #if os(iOS)
+        tint(.green)
+        #else
+        self
+        #endif
+    }
+}
+
+struct FormSettingsView: View {
     @Environment(Store.self) private var store
     @Environment(Updates.self) private var updates
-    @State private var directURL = ""
     @State private var cloudSummary = ""
     @State private var bilibiliSummary = ""
+    @State private var douyinSummary = ""
     @AppStorage(DanmakuPreference.key) private var showsDanmaku = true
-    #if os(tvOS) || os(macOS)
+    #if os(macOS)
     @AppStorage(BilibiliCastController.key) private var receivesCasts = true
     #endif
     private var version: String? {
-        let info = Bundle.main.infoDictionary
-        guard let short = info?["CFBundleShortVersionString"] as? String, !short.isEmpty else { return nil }
-        return L10n.text("Version %@", short)
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String).flatMap { $0.isEmpty ? nil : L10n.text("Version %@", $0) }
     }
+
     var body: some View {
         @Bindable var store = store
-        SettingsPage(title: L10n.text("Settings")) {
-            // A waiting release leads the page; otherwise update status sits with About.
-            if !updates.available.isEmpty { UpdateSettingsGroup() }
-            SettingsGroup(title: L10n.text("Subscriptions"), footer: store.notice) {
-                VStack(alignment: .leading, spacing: 12) {
-                    SettingsField(prompt: L10n.text("TVBox, M3U or TXT URL"), text: $store.subscriptionAddress)
-                    // One row whenever it fits; stack only when a narrow width or large text needs it.
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 8) { subscriptionActions }
-                        VStack(alignment: .leading, spacing: 8) { subscriptionActions }
+        Form {
+            // The app leads, like the account card in Settings; a waiting release sits right under it.
+            Section {
+                HStack(spacing: 14) {
+                    AppMark(size: FormMetrics.hero)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(L10n.text("Yingxia")).font(.title3.weight(.semibold))
+                        if let version { Text(version).font(.subheadline).foregroundStyle(.secondary) }
+                        Text(Brand.copyright).font(.caption).foregroundStyle(.tertiary)
                     }
+                    .lineLimit(1)
                 }
-                .padding(14)
-                ForEach(store.entries) { entry in
-                    SettingsRow(symbol: store.activeID == entry.id ? "checkmark.seal.fill" : "doc.plaintext",
-                                tint: store.activeID == entry.id ? .green : .gray,
-                                title: entry.displayName,
-                                subtitle: L10n.text("Sources: %lld · Live playlists: %lld", entry.siteCount, entry.liveCount)) {
-                        HStack(spacing: 8) {
-                            Button(L10n.text("Refresh")) { Task { await store.refreshSubscription(entry.id) } }.settingsButton()
-                            Button(L10n.text("Remove")) { store.removeSubscription(entry.id) }.settingsButton()
+                .padding(.vertical, 6)
+                .accessibilityElement(children: .combine)
+                if let latest = updates.available.first {
+                    Button(action: updates.show) {
+                        LabeledContent {
+                            NewBadge()
+                        } label: {
+                            FormLabel(symbol: "gift.fill", tint: Brand.cyan, title: L10n.text("Yingxia %@ is available", latest.version),
+                                      subtitle: L10n.text("New features are waiting for you."))
                         }
-                    }
-                }
-                if store.entries.count > 1 {
-                    Picker(L10n.text("Subscription"), selection: Binding(get: { store.activeID }, set: { if let id = $0 { store.selectSubscription(id) } })) {
-                        ForEach(store.entries) { entry in Text(entry.displayName).tag(Optional(entry.id)) }
-                    }
-                    .padding(.horizontal, 14).padding(.bottom, 14)
+                    }.formRowButton()
                 }
             }
-            SettingsGroup(title: L10n.text("Accounts")) {
-                SettingsLinkRow(symbol: "play.tv.fill", tint: .pink, title: L10n.text("Bilibili"), subtitle: bilibiliSummary) { BilibiliAccountView() }
+
+            Section {
+                ForEach(store.subscriptions) { entry in
+                    let failure = store.subscriptionErrors[entry.address]
+                    FormLink(symbol: failure == nil ? "list.bullet.rectangle.fill" : "exclamationmark.triangle.fill",
+                             tint: failure != nil ? .orange : entry.enabled ? .blue : .gray,
+                             title: entry.title, value: subscriptionValue(entry), warning: failure != nil) {
+                        SubscriptionDetailView(entry: entry)
+                    }
+                }
+                TextField(L10n.text("TVBox, M3U or TXT URL"), text: $store.subscriptionAddress, prompt: Text(L10n.text("TVBox, M3U or TXT URL")))
+                    .labelsHidden()
+                    .autocorrectionDisabled()
+                    #if os(iOS)
+                    .textInputAutocapitalization(.never).keyboardType(.URL)
+                    #endif
+                    .onSubmit { add() }
+                subscriptionActions
+            } header: {
+                Text(L10n.text("Subscriptions"))
+            } footer: {
+                if let message = store.error ?? store.notice { Text(message) }
+            }
+
+            Section(L10n.text("Accounts")) {
+                FormLink(symbol: "play.tv.fill", tint: .pink, title: L10n.text("Bilibili"), value: bilibiliSummary) { BilibiliAccountView() }
+                FormLink(symbol: "music.note", tint: .black, title: L10n.text("Douyin"), value: douyinSummary) { DouyinAccountView() }
+                FormLink(symbol: "externaldrive.fill.badge.person.crop", tint: .brown, title: L10n.text("Cloud Drive Accounts"), value: cloudSummary) { CloudDriveView() }
+            }
+
+            Section(L10n.text("Playback")) {
+                Toggle(isOn: $showsDanmaku) {
+                    FormLabel(symbol: "text.bubble.fill", tint: .teal, title: L10n.text("Show Danmaku"),
+                              subtitle: L10n.text("Bilibili's bullet comments, drawn over the video. You can also switch them in the player."))
+                }
+                .settingsSwitch()
                 #if os(macOS)
-                SettingsLinkRow(symbol: "externaldrive.fill.badge.person.crop", tint: .brown,
-                                title: L10n.text("Cloud Drive Accounts"), subtitle: cloudSummary) { CloudDriveView() }
-                #endif
-            }
-            SettingsGroup(title: L10n.text("Playback")) {
-                SettingsRow(symbol: "text.bubble.fill", tint: .teal, title: L10n.text("Show Danmaku"),
-                            subtitle: L10n.text("Bilibili's bullet comments, drawn over the video. You can also switch them in the player.")) {
-                    Toggle(L10n.text("Show Danmaku"), isOn: $showsDanmaku).labelsHidden()
+                Toggle(isOn: $receivesCasts) {
+                    FormLabel(symbol: "tv.and.mediabox.fill", tint: BilibiliMark.blue, title: L10n.text("Cast from the Bilibili App"),
+                              subtitle: L10n.text("With your phone on the same network, tap the TV button in a Bilibili video and choose %@.", L10n.text("Yingxia")))
                 }
-                #if os(tvOS) || os(macOS)
-                SettingsRow(symbol: "tv.and.mediabox.fill", tint: BilibiliMark.blue, title: L10n.text("Cast from the Bilibili App"),
-                            subtitle: L10n.text("With your phone on the same network, tap the TV button in a Bilibili video and choose %@.", L10n.text("Yingxia"))) {
-                    Toggle(L10n.text("Cast from the Bilibili App"), isOn: $receivesCasts).labelsHidden()
-                        .onChange(of: receivesCasts) { _, on in
-                            if on { BilibiliCastController.shared.start(store) } else { BilibiliCastController.shared.stop() }
+                .onChange(of: receivesCasts) { _, on in
+                    if on { BilibiliCastController.shared.start(store) } else { BilibiliCastController.shared.stop() }
+                }
+                #endif
+                FormLink(symbol: "play.fill", tint: Brand.indigo, title: L10n.text("Play a URL")) { PlayURLView() }
+            }
+
+            Section(L10n.text("Advanced")) {
+                FormLink(symbol: "internaldrive", tint: .blue, title: L10n.text("Local Cache")) { CacheSettingsView() }
+                FormLink(symbol: "cpu.fill", tint: .orange, title: L10n.text("JAR Runtime and Compatibility")) { RuntimeView() }
+                FormLink(symbol: "doc.text.magnifyingglass", tint: .gray, title: L10n.text("Diagnostic Logs")) { DiagnosticsView() }
+            }
+
+            Section {
+                if updates.available.isEmpty {
+                    LabeledContent {
+                        Button { Task { await updates.check(manual: true) } } label: {
+                            if updates.checking { ProgressView().controlSize(.small) } else { Text(L10n.text("Check Now")) }
                         }
-                }
-                #endif
-                SettingsRow(symbol: "play.fill", tint: Brand.terracotta, title: L10n.text("Play a URL"))
-                HStack(spacing: 10) {
-                    SettingsField(prompt: L10n.text("HTTP / HTTPS media URL"), text: $directURL)
-                    Button(L10n.text("Open Player")) {
-                        do { store.playing = Channel(name: L10n.text("URL Playback"), url: try WebAddress.resolve(directURL)) }
-                        catch { store.error = error.localizedDescription }
+                        .disabled(updates.checking)
+                    } label: {
+                        FormLabel(symbol: "checkmark.circle.fill", tint: .green, title: L10n.text("Yingxia is up to date"),
+                                  subtitle: updates.lastChecked.map { L10n.text("Last checked %@", $0.formatted(date: .abbreviated, time: .shortened)) })
                     }
-                    .settingsButton(prominent: true)
-                    .disabled(directURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-                .padding(14)
+                if !updates.currentNotes.isEmpty {
+                    Button(action: updates.showCurrentNotes) {
+                        FormLabel(symbol: "sparkles", tint: .purple, title: L10n.text("What's New in Version %@", updates.current))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }.formRowButton()
+                }
+                FormLink(symbol: "doc.plaintext.fill", tint: .gray, title: L10n.text("Open Source Licenses")) { LicensesView() }
+            } header: {
+                Text(L10n.text("About"))
+            } footer: {
+                Text(L10n.text("Supports TVBox JSON subscriptions, M3U / TXT live playlists, and standard type 1 / type 4 JSON APIs. Media formats depend on the device. Local JavaScript and Python plugins are experimental on Mac, and JAR plugins are experimental on every platform; compatibility varies by source."))
             }
-            SettingsGroup(title: L10n.text("Advanced")) {
-                SettingsLinkRow(symbol: "internaldrive", tint: .blue, title: L10n.text("Local Cache")) { CacheSettingsView() }
-                SettingsLinkRow(symbol: "cpu.fill", tint: .orange, title: L10n.text("JAR Runtime and Compatibility")) { RuntimeView() }
-                SettingsLinkRow(symbol: "doc.text.magnifyingglass", tint: .gray, title: L10n.text("Diagnostic Logs")) { DiagnosticsView() }
-            }
-            SettingsGroup(title: L10n.text("About"),
-                          footer: L10n.text("Supports TVBox JSON subscriptions, M3U / TXT live playlists, and standard type 1 / type 4 JSON APIs. Media formats depend on the device. Local JavaScript and Python plugins are experimental on Mac, and JAR plugins are experimental on every platform; compatibility varies by source.")) {
-                SettingsRow(symbol: "play.tv.fill", tint: .pink, title: L10n.text("Yingxia"),
-                            subtitle: [version, Brand.copyright].compactMap { $0 }.joined(separator: " · "))
-                SettingsLinkRow(symbol: "doc.plaintext.fill", tint: .gray, title: L10n.text("Open Source Licenses")) { LicensesView() }
-            }
-            if updates.available.isEmpty { UpdateSettingsGroup() }
         }
+        .settingsForm(L10n.text("Settings"))
         // Refreshed whenever Settings reappears, so a sign-in on the account page shows here.
-        .onAppear { bilibiliSummary = BilibiliAccount.load().summary }
+        .onAppear { bilibiliSummary = BilibiliAccount.load().summary; douyinSummary = DouyinAccount.load().summary; cloudSummary = CloudProvider.summary() }
+    }
+
+    private var canAdd: Bool { !store.importing && !store.subscriptionAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private func add() { if canAdd { Task { await store.importSubscription() } } }
+
+    @ViewBuilder private var subscriptionActions: some View {
         #if os(macOS)
-        .task { cloudSummary = CloudProvider.summary() }
+        // System Settings style: the actions as buttons at the trailing edge, the default one prominent.
+        HStack {
+            if !store.subscriptions.isEmpty {
+                Button(L10n.text("Refresh All")) { Task { await store.refreshSubscriptions() } }.disabled(store.importing)
+            }
+            Spacer()
+            if store.importing { ProgressView().controlSize(.small); ElapsedTime() }
+            Button(L10n.text("Use Default URL")) { store.subscriptionAddress = Store.defaultURL }
+            Button(store.importing ? L10n.text("Importing…") : L10n.text("Add Subscription")) { add() }
+                .buttonStyle(.borderedProminent).disabled(!canAdd)
+        }
+        #else
+        Button { add() } label: {
+            HStack {
+                Text(store.importing ? L10n.text("Importing…") : L10n.text("Add Subscription"))
+                if store.importing { Spacer(); ElapsedTime().foregroundStyle(.secondary); ProgressView() }
+            }
+        }.disabled(!canAdd)
+        Button(L10n.text("Use Default URL")) { store.subscriptionAddress = Store.defaultURL }
+        if !store.subscriptions.isEmpty {
+            Button(L10n.text("Refresh All")) { Task { await store.refreshSubscriptions() } }.disabled(store.importing)
+        }
         #endif
     }
-    @ViewBuilder private var subscriptionActions: some View {
-        Button { Task { await store.importSubscription() } } label: {
-            HStack(spacing: 6) {
-                if store.importing { ProgressView().controlSize(.mini) }
-                Text(store.importing ? L10n.text("Importing…") : L10n.text("Add Subscription"))
-                if store.importing { ElapsedTime() }
-            }
-        }
-        .settingsButton(prominent: true)
-        .disabled(store.importing || store.subscriptionAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        Button(L10n.text("Use Default URL")) { store.subscriptionAddress = Store.defaultURL }.settingsButton()
+
+    private func subscriptionValue(_ entry: SubscriptionEntry) -> String {
+        if store.subscriptionErrors[entry.address] != nil { return L10n.text("Couldn't refresh") }
+        if !entry.enabled { return L10n.text("Off") }
+        guard let copy = store.documents[entry.address] else { return L10n.text("Not loaded yet") }
+        return L10n.text("%lld sources", copy.sites.count)
     }
 }
+
+/// One subscription: switch it on or off, move it (earlier subscriptions win duplicate sources), or remove it.
+private struct SubscriptionDetailView: View {
+    @Environment(Store.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    let entry: SubscriptionEntry
+    @State private var confirmsRemoval = false
+    var body: some View {
+        let current = store.subscriptions.first { $0.address == entry.address } ?? entry
+        let index = store.subscriptions.firstIndex { $0.address == entry.address } ?? 0
+        let failure = store.subscriptionErrors[entry.address]
+        let copy = store.documents[entry.address]
+        Form {
+            Section {
+                Toggle(isOn: Binding(get: { current.enabled }, set: { on in Task { await store.setSubscription(current, enabled: on) } })) {
+                    FormLabel(symbol: "list.bullet.rectangle.fill", tint: current.enabled ? .blue : .gray, title: L10n.text("Use This Subscription"))
+                }
+                .settingsSwitch()
+                .disabled(store.importing)
+                if store.subscriptions.count > 1 {
+                    Toggle(isOn: Binding(get: { store.activeAddress == current.address },
+                                         set: { on in store.selectSubscription(address: on ? current.address : nil) })) {
+                        FormLabel(symbol: "square.stack.3d.up.fill", tint: .green, title: L10n.text("Show Only This Subscription"))
+                    }
+                    .settingsSwitch()
+                    .disabled(store.importing)
+                }
+                LabeledContent(L10n.text("TVBox, M3U or TXT URL")) {
+                    Text(current.address).lineLimit(2).truncationMode(.middle).textSelection(.enabled).foregroundStyle(.secondary)
+                }
+            } footer: {
+                if let failure { Text(L10n.text("Couldn't refresh: %@", failure)) }
+                else if let copy { Text(L10n.text("Sources: %lld · Live playlists: %lld", copy.sites.count, copy.lives.count)) }
+            }
+            if store.subscriptions.count > 1 {
+                Section(L10n.text("Order")) {
+                    if index > 0 { Button(L10n.text("Move Up")) { store.moveSubscription(current, by: -1) } }
+                    if index < store.subscriptions.count - 1 { Button(L10n.text("Move Down")) { store.moveSubscription(current, by: 1) } }
+                }
+            }
+            Section {
+                Button(L10n.text("Remove"), role: .destructive) { confirmsRemoval = true }
+            }
+        }
+        .settingsForm(current.title)
+        .confirmationDialog(L10n.text("Remove"), isPresented: $confirmsRemoval) {
+            Button(L10n.text("Remove"), role: .destructive) { store.removeSubscription(current); dismiss() }
+        }
+    }
+}
+
+/// Playing a media address directly.
+private struct PlayURLView: View {
+    @Environment(Store.self) private var store
+    @State private var address = ""
+    private var empty: Bool { address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    var body: some View {
+        Form {
+            Section {
+                TextField(L10n.text("HTTP / HTTPS media URL"), text: $address, prompt: Text(L10n.text("HTTP / HTTPS media URL")))
+                    .labelsHidden()
+                    .autocorrectionDisabled()
+                    #if os(iOS)
+                    .textInputAutocapitalization(.never).keyboardType(.URL)
+                    #endif
+                    .onSubmit(open)
+                #if os(macOS)
+                HStack { Spacer(); Button(L10n.text("Open Player"), action: open).buttonStyle(.borderedProminent).disabled(empty) }
+                #else
+                Button(L10n.text("Open Player"), action: open).disabled(empty)
+                #endif
+            }
+        }
+        .settingsForm(L10n.text("Play a URL"))
+    }
+    private func open() {
+        guard !empty else { return }
+        do { store.playing = Channel(name: L10n.text("URL Playback"), url: try WebAddress.resolve(address)) }
+        catch { store.error = error.localizedDescription }
+    }
+}
+#endif
 
 struct LicensesView: View {
     private var notices: String {
@@ -297,37 +495,50 @@ struct LicensesView: View {
     }
     var body: some View {
         #if os(tvOS)
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 24) {
-                Text("Yingxia \(Brand.copyright)").font(.headline)
-                    .padding(22).frame(maxWidth: .infinity, alignment: .leading)
-                    .contentPanel(cornerRadius: 18).focusable()
+        // Each paragraph is a row the remote can land on, which is how the page scrolls.
+        SettingsPage(title: L10n.text("Open Source Licenses"), symbol: "doc.plaintext", subtitle: "Yingxia \(Brand.copyright)") {
+            SettingsGroup {
                 ForEach(Array(notices.components(separatedBy: "\n\n").enumerated()), id: \.offset) { _, paragraph in
-                    Text(paragraph).font(.body)
-                        .padding(22).frame(maxWidth: .infinity, alignment: .leading)
-                        .contentPanel(cornerRadius: 18).focusable()
+                    Button {} label: {
+                        // The file is wrapped for a terminal; proportional text reads better reflowed.
+                        Text(paragraph.replacingOccurrences(of: "\n", with: " ")).font(.system(size: 24)).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(ParagraphStyle())
                 }
-            }.frame(maxWidth: 1200).frame(maxWidth: .infinity).padding(Layout.gutter)
+            }
         }
-        .screenBackdrop()
-        .screenTitle(L10n.text("Open Source Licenses"))
         #else
         SettingsPage(title: L10n.text("Open Source Licenses")) {
-            SettingsGroup {
+            Section {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Yingxia \(Brand.copyright)").font(.headline)
                     Link("www.getmegaportal.com", destination: Brand.website).font(.subheadline)
                 }
-                .padding(18).frame(maxWidth: .infinity, alignment: .leading)
             }
-            SettingsGroup {
+            Section {
                 Text(notices)
                     .font(.system(.footnote, design: .monospaced)).foregroundStyle(.secondary).selectable()
-                    .padding(18).frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         #endif
     }
+    #if os(tvOS)
+    /// A glass row's focus, in a rounded rectangle: a capsule around a tall paragraph looked odd.
+    private struct ParagraphStyle: ButtonStyle {
+        func makeBody(configuration: Configuration) -> some View { Plate(configuration: configuration) }
+        private struct Plate: View {
+            let configuration: ButtonStyleConfiguration
+            @Environment(\.isFocused) private var focused
+            var body: some View {
+                configuration.label
+                    .padding(.horizontal, 28).padding(.vertical, 14)
+                    .glassSurface(focused ? .regular.tint(.white.opacity(0.12)) : .identity, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+                    .animation(.easeOut(duration: 0.15), value: focused)
+            }
+        }
+    }
+    #endif
 }
 
 struct DiagnosticsView: View {
@@ -650,3 +861,354 @@ private struct DiagnosticDetail: View {
         .screenBackdrop()
     }
 }
+
+#if os(tvOS)
+// MARK: Settings on Apple TV
+// Laid out like the system's own Settings: the app on the left, a list on the right. Every row is
+// one press of the remote: its current value sits at the trailing edge, a switch flips in place,
+// and anything that needs typing or choosing opens a page of its own.
+
+struct TVSettingsView: View {
+    @Environment(Store.self) private var store
+    @Environment(Updates.self) private var updates
+    @State private var cloudSummary = ""
+    @State private var bilibiliSummary = ""
+    @State private var douyinSummary = ""
+    @AppStorage(DanmakuPreference.key) private var showsDanmaku = true
+    @AppStorage(BilibiliCastController.key) private var receivesCasts = true
+
+    var body: some View {
+        TVSettingsLayout {
+            TVSettingsHero()
+        } list: {
+            if !updates.available.isEmpty { updateSection }
+            subscriptionSection
+            TVSettingsSection(title: L10n.text("Accounts")) {
+                TVSettingsLink(title: L10n.text("Bilibili"), value: bilibiliSummary) { BilibiliAccountView() }
+                TVSettingsLink(title: L10n.text("Douyin"), value: douyinSummary) { DouyinAccountView() }
+                TVSettingsLink(title: L10n.text("Cloud Drive Accounts"), value: cloudSummary) { CloudDriveView() }
+            }
+            TVSettingsSection(title: L10n.text("Playback"),
+                              footer: L10n.text("With your phone on the same network, tap the TV button in a Bilibili video and choose %@.", L10n.text("Yingxia"))) {
+                TVSettingsToggle(title: L10n.text("Show Danmaku"), isOn: $showsDanmaku)
+                TVSettingsToggle(title: L10n.text("Cast from the Bilibili App"), isOn: $receivesCasts)
+                    .onChange(of: receivesCasts) { _, on in
+                        if on { BilibiliCastController.shared.start(store) } else { BilibiliCastController.shared.stop() }
+                    }
+                TVSettingsLink(title: L10n.text("Play a URL")) { TVPlayURLPage() }
+            }
+            TVSettingsSection(title: L10n.text("Advanced")) {
+                TVSettingsLink(title: L10n.text("Local Cache")) { CacheSettingsView() }
+                TVSettingsLink(title: L10n.text("JAR Runtime and Compatibility")) { RuntimeView() }
+                TVSettingsLink(title: L10n.text("Diagnostic Logs")) { DiagnosticsView() }
+            }
+            if updates.available.isEmpty { updateSection }
+            TVSettingsSection(title: L10n.text("About"),
+                              footer: L10n.text("Supports TVBox JSON subscriptions, M3U / TXT live playlists, and standard type 1 / type 4 JSON APIs. Media formats depend on the device. Local JavaScript and Python plugins are experimental on Mac, and JAR plugins are experimental on every platform; compatibility varies by source.")) {
+                TVSettingsLink(title: L10n.text("Open Source Licenses")) { LicensesView() }
+            }
+        }
+        .tabTitle(L10n.text("Settings"))
+        // Refreshed whenever Settings reappears, so a sign-in on the account page shows here.
+        .onAppear { bilibiliSummary = BilibiliAccount.load().summary; douyinSummary = DouyinAccount.load().summary; cloudSummary = CloudProvider.summary() }
+    }
+
+    private var subscriptionSection: some View {
+        TVSettingsSection(title: L10n.text("Subscriptions"), footer: store.notice) {
+            ForEach(store.subscriptions) { entry in
+                let failed = store.subscriptionErrors[entry.address] != nil
+                TVSettingsLink(title: entry.title, value: subscriptionValue(entry), warning: failed) { TVSubscriptionPage(entry: entry) }
+            }
+            TVSettingsLink(title: L10n.text("Add Subscription")) { TVAddSubscriptionPage() }
+            if !store.subscriptions.isEmpty {
+                TVSettingsAction(title: L10n.text("Refresh All"),
+                                 value: store.importing ? L10n.text("Importing…") : store.subscription.map { $0.importedAt.formatted(date: .abbreviated, time: .shortened) },
+                                 busy: store.importing) { Task { await store.refreshSubscriptions() } }
+                    .disabled(store.importing)
+            }
+        }
+    }
+
+    private func subscriptionValue(_ entry: SubscriptionEntry) -> String {
+        if store.subscriptionErrors[entry.address] != nil { return L10n.text("Couldn't refresh") }
+        if !entry.enabled { return L10n.text("Off") }
+        guard let copy = store.documents[entry.address] else { return L10n.text("Not loaded yet") }
+        return L10n.text("%lld sources", copy.sites.count)
+    }
+
+    private var updateSection: some View {
+        TVSettingsSection(title: L10n.text("Software Update")) {
+            if let latest = updates.available.first {
+                Button(action: updates.show) {
+                    TVSettingsRowLabel(title: L10n.text("Yingxia %@ is available", latest.version), chevron: true) { NewBadge() }
+                }.glassRow()
+            } else {
+                TVSettingsAction(title: L10n.text("Check Now"),
+                                 value: updates.checking ? L10n.text("Checking…") : updates.lastChecked.map { L10n.text("Last checked %@", $0.formatted(date: .abbreviated, time: .shortened)) },
+                                 busy: updates.checking) { Task { await updates.check(manual: true) } }
+                    .disabled(updates.checking)
+            }
+            if !updates.currentNotes.isEmpty {
+                Button(action: updates.showCurrentNotes) {
+                    TVSettingsRowLabel(title: L10n.text("What's New in Version %@", updates.current), chevron: true)
+                }.glassRow()
+            }
+        }
+    }
+}
+
+/// The page frame: a hero column on the left, vertically centred, and the scrolling list on the right.
+struct TVSettingsLayout<Hero: View, List: View>: View {
+    @ViewBuilder var hero: Hero
+    @ViewBuilder var list: List
+    var body: some View {
+        HStack(alignment: .center, spacing: 72) {
+            hero.frame(width: 560).frame(maxHeight: .infinity)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 48) { list }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .glassRowInsets()
+                    .padding(.vertical, 40)
+            }
+            .scrollClipDisabled()
+            .tvFocusSection()
+        }
+        .padding(.horizontal, Layout.gutter)
+        .screenBackdrop()
+    }
+}
+
+/// The app as the left column of Settings: its icon, name, version and credit.
+private struct TVSettingsHero: View {
+    private var version: String? {
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String).flatMap { $0.isEmpty ? nil : L10n.text("Version %@", $0) }
+    }
+    var body: some View {
+        VStack(spacing: 34) {
+            AppMark(size: 300)
+            VStack(spacing: 10) {
+                Text(L10n.text("Yingxia")).font(.system(size: 48, weight: .bold))
+                if let version { Text(version).font(.system(size: 26)).foregroundStyle(.secondary) }
+                Text(Brand.copyright).font(.system(size: 22)).foregroundStyle(.tertiary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// A titled run of rows with an optional note under it.
+struct TVSettingsSection<Content: View>: View {
+    var title: String? = nil
+    var footer: String? = nil
+    @ViewBuilder var content: Content
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let title {
+                Text(title).font(.system(size: 25, weight: .semibold)).foregroundStyle(.secondary)
+                    .padding(.leading, 28).padding(.bottom, 6).accessibilityAddTraits(.isHeader)
+            }
+            content
+            if let footer, !footer.isEmpty {
+                Text(footer).font(.system(size: 22)).foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 28).padding(.top, 8)
+            }
+        }
+    }
+}
+
+/// The title on the leading edge; the current value, an accessory and a chevron on the trailing one.
+struct TVSettingsRowLabel<Accessory: View>: View {
+    let title: String
+    var value: String? = nil
+    var warning = false
+    var busy = false
+    var chevron = false
+    @ViewBuilder var accessory: Accessory
+    var body: some View {
+        HStack(spacing: 18) {
+            Text(title).font(.system(size: 29, weight: .medium)).lineLimit(1).layoutPriority(1)
+            Spacer(minLength: 32)
+            if busy { ProgressView() }
+            if let value, !value.isEmpty {
+                Text(value).font(.system(size: 27)).lineLimit(1).truncationMode(.middle)
+                    .foregroundStyle(warning ? AnyShapeStyle(Brand.amber) : AnyShapeStyle(.secondary))
+            }
+            accessory
+            if chevron {
+                Image(systemName: "chevron.right").font(.system(size: 22, weight: .semibold)).foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+}
+
+extension TVSettingsRowLabel where Accessory == EmptyView {
+    init(title: String, value: String? = nil, warning: Bool = false, busy: Bool = false, chevron: Bool = false) {
+        self.init(title: title, value: value, warning: warning, busy: busy, chevron: chevron) { EmptyView() }
+    }
+}
+
+/// A row that opens a page.
+struct TVSettingsLink<Destination: View>: View {
+    let title: String
+    var value: String? = nil
+    var warning = false
+    @ViewBuilder var destination: () -> Destination
+    var body: some View {
+        RouteLink(destination: destination) { TVSettingsRowLabel(title: title, value: value, warning: warning, chevron: true) }
+            .glassRow()
+    }
+}
+
+/// A switch as a row: selecting it flips the value shown at the trailing edge.
+struct TVSettingsToggle: View {
+    let title: String
+    @Binding var isOn: Bool
+    var body: some View {
+        Button { isOn.toggle() } label: { TVSettingsRowLabel(title: title, value: L10n.text(isOn ? "On" : "Off")) }
+            .glassRow()
+            .accessibilityValue(L10n.text(isOn ? "On" : "Off"))
+    }
+}
+
+/// A row that does something in place.
+struct TVSettingsAction: View {
+    let title: String
+    var value: String? = nil
+    var busy = false
+    var destructive = false
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            TVSettingsRowLabel(title: title, value: value, busy: busy).foregroundStyle(destructive ? Brand.rose : Color.primary)
+        }
+        .glassRow()
+    }
+}
+
+/// Text entry as a row: the title and the current text, like any other row. A focused tvOS text
+/// field always draws the system's white platter, which sat inside the glass row as a box in a box,
+/// so selecting the row opens the system's text entry instead, as Wi-Fi passwords do.
+struct TVSettingsField: View {
+    let title: String
+    @Binding var text: String
+    @State private var editing = false
+    @State private var draft = ""
+    var body: some View {
+        Button { draft = text; editing = true } label: {
+            TVSettingsRowLabel(title: title, value: text.isEmpty ? L10n.text("Not set") : text)
+        }
+        .glassRow()
+        .alert(title, isPresented: $editing) {
+            TextField(title, text: $draft)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never).keyboardType(.URL)
+            Button(L10n.text("Done")) { text = draft.trimmingCharacters(in: .whitespacesAndNewlines) }
+            Button(L10n.text("Cancel"), role: .cancel) {}
+        }
+    }
+}
+
+/// A page under Settings: a large symbol and title on the left, its rows on the right.
+struct TVSettingsSubpage<Content: View>: View {
+    let symbol: String
+    let title: String
+    var subtitle: String? = nil
+    @ViewBuilder var content: Content
+    var body: some View {
+        TVSettingsLayout {
+            VStack(spacing: 30) {
+                Image(systemName: symbol).font(.system(size: 120, weight: .regular)).foregroundStyle(.secondary)
+                    .frame(height: 180)
+                VStack(spacing: 10) {
+                    Text(title).font(.system(size: 44, weight: .bold)).multilineTextAlignment(.center).lineLimit(2)
+                    if let subtitle, !subtitle.isEmpty {
+                        Text(subtitle).font(.system(size: 24)).foregroundStyle(.secondary).multilineTextAlignment(.center).lineLimit(3)
+                    }
+                }
+            }
+            .accessibilityElement(children: .combine)
+        } list: { content }
+        .screenTitle("")
+    }
+}
+
+/// One subscription: switch it on or off, move it (earlier subscriptions win duplicate sources), or remove it.
+private struct TVSubscriptionPage: View {
+    @Environment(Store.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    let entry: SubscriptionEntry
+    @State private var confirmsRemoval = false
+    var body: some View {
+        let current = store.subscriptions.first { $0.address == entry.address } ?? entry
+        let index = store.subscriptions.firstIndex { $0.address == entry.address } ?? 0
+        let failure = store.subscriptionErrors[entry.address]
+        let copy = store.documents[entry.address]
+        TVSettingsSubpage(symbol: "list.bullet.rectangle", title: current.title, subtitle: current.address) {
+            TVSettingsSection(title: L10n.text("Subscription"),
+                              footer: failure.map { L10n.text("Couldn't refresh: %@", $0) }
+                                ?? copy.map { L10n.text("Sources: %lld · Live playlists: %lld", $0.sites.count, $0.lives.count) }) {
+                TVSettingsToggle(title: L10n.text("Use This Subscription"),
+                                 isOn: Binding(get: { current.enabled }, set: { on in Task { await store.setSubscription(current, enabled: on) } }))
+                    .disabled(store.importing)
+            }
+            if store.subscriptions.count > 1 {
+                TVSettingsSection(title: L10n.text("Order")) {
+                    if index > 0 { TVSettingsAction(title: L10n.text("Move Up")) { store.moveSubscription(current, by: -1) } }
+                    if index < store.subscriptions.count - 1 { TVSettingsAction(title: L10n.text("Move Down")) { store.moveSubscription(current, by: 1) } }
+                }
+            }
+            TVSettingsSection(title: L10n.text("Remove")) {
+                TVSettingsAction(title: L10n.text("Remove"), destructive: true) { confirmsRemoval = true }
+            }
+        }
+        .confirmationDialog(L10n.text("Remove"), isPresented: $confirmsRemoval) {
+            Button(L10n.text("Remove"), role: .destructive) { store.removeSubscription(current); dismiss() }
+        }
+    }
+}
+
+/// Adding a subscription: the address, then add it or fill in the default one.
+private struct TVAddSubscriptionPage: View {
+    @Environment(Store.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        @Bindable var store = store
+        let empty = store.subscriptionAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        TVSettingsSubpage(symbol: "plus.rectangle.on.rectangle", title: L10n.text("Add Subscription")) {
+            TVSettingsSection(title: L10n.text("Subscription"), footer: store.error ?? store.notice) {
+                TVSettingsField(title: L10n.text("TVBox, M3U or TXT URL"), text: $store.subscriptionAddress)
+                TVSettingsAction(title: store.importing ? L10n.text("Importing…") : L10n.text("Add Subscription"), busy: store.importing) {
+                    Task {
+                        let before = store.subscriptions.count
+                        await store.importSubscription()
+                        if store.error == nil, store.subscriptions.count > before { dismiss() }
+                    }
+                }
+                .disabled(store.importing || empty)
+                TVSettingsAction(title: L10n.text("Use Default URL")) { store.subscriptionAddress = Store.defaultURL }
+            }
+        }
+    }
+}
+
+/// Playing a media address directly.
+private struct TVPlayURLPage: View {
+    @Environment(Store.self) private var store
+    @State private var address = ""
+    var body: some View {
+        TVSettingsSubpage(symbol: "play.rectangle", title: L10n.text("Play a URL")) {
+            TVSettingsSection(title: L10n.text("Playback")) {
+                TVSettingsField(title: L10n.text("HTTP / HTTPS media URL"), text: $address)
+                TVSettingsAction(title: L10n.text("Open Player")) {
+                    do { store.playing = Channel(name: L10n.text("URL Playback"), url: try WebAddress.resolve(address)) }
+                    catch { store.error = error.localizedDescription }
+                }
+                .disabled(address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+    }
+}
+#endif

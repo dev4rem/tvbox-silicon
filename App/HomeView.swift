@@ -14,7 +14,7 @@ struct HomeView: View {
         ScrollViewReader { reader in
             ScrollView {
                 VStack(alignment: .leading, spacing: Layout.sectionSpacing) {
-                    if store.entries.count > 1 { subscriptionSwitcher }
+                    if store.subscriptions.count > 1 { subscriptionSwitcher }
                     if !store.playbackHistory.entries.isEmpty { continueWatching }
                     if let config = store.subscription {
                         if store.orderedSites(config).contains(where: { store.pinnedSources.contains($0, origin: config.origin) }) {
@@ -110,21 +110,26 @@ struct HomeView: View {
 
     // MARK: Sections
 
-    /// The visible library, when several subscriptions are imported. Each entry keeps
-    /// its own sources and playlists; switching swaps the shelves below.
+    /// The visible library, when several subscriptions are imported. Tapping the
+    /// shown one again goes back to every enabled subscription, merged.
     private var subscriptionSwitcher: some View {
         Menu {
-            ForEach(store.entries) { entry in
-                Button { store.selectSubscription(entry.id) } label: {
-                    Label(entry.displayName, systemImage: store.activeID == entry.id ? "checkmark" : "doc.plaintext")
+            ForEach(store.subscriptions) { entry in
+                Button { store.selectSubscription(address: store.activeAddress == entry.address ? nil : entry.address) } label: {
+                    Label(entry.title, systemImage: store.activeAddress == entry.address ? "checkmark" : "doc.plaintext")
                 }
             }
         } label: {
-            Label(store.entries.first(where: { $0.id == store.activeID })?.displayName ?? L10n.text("Subscription"),
-                  systemImage: "square.stack.3d.up")
+            Label(activeSubscriptionTitle, systemImage: "square.stack.3d.up")
         }
         .controlButton()
         .accessibilityIdentifier("home.subscriptionSwitcher")
+    }
+
+    private var activeSubscriptionTitle: String {
+        if let active = store.activeAddress,
+           let entry = store.subscriptions.first(where: { $0.address == active }) { return entry.title }
+        return L10n.text("Subscription")
     }
 
     private func pinnedSources(_ config: Subscription) -> some View {
@@ -133,7 +138,7 @@ struct HomeView: View {
             LazyVGrid(columns: Layout.cardColumns, spacing: Layout.cardSpacing) {
                 ForEach(store.orderedSites(config).filter { store.pinnedSources.contains($0, origin: config.origin) }) { site in
                     RouteLink { SiteView(site: site, origin: config.origin, jarURL: config.spiderURL) } label: { SiteCard(site: site) }
-                        .cardButton().contextMenu { PinSourceButton(site: site, origin: config.origin) }
+                        .tileButton().contextMenu { PinSourceButton(site: site, origin: config.origin) }
                         .accessibilityIdentifier("home.pinned." + site.key)
                 }
             }
@@ -174,7 +179,7 @@ struct HomeView: View {
 }
 
 /// The app icon artwork, masked like a home-screen icon.
-private struct AppMark: View {
+struct AppMark: View {
     var size: CGFloat
     var body: some View {
         Image("YingxiaLogo").resizable().interpolation(.high).scaledToFill()
@@ -184,9 +189,9 @@ private struct AppMark: View {
     }
 }
 
-/// Decorative poster tiles: staggered columns in the brand's warm hues, fading into the canvas.
+/// Decorative poster tiles: staggered columns in the icon's blues, fading into the canvas.
 private struct PosterWall: View {
-    private static let hues: [Color] = [Brand.accent, Brand.terracotta, Brand.amber, Brand.rose]
+    private static let hues: [Color] = [Brand.cyan, Brand.indigo, Brand.teal, Brand.cyan.opacity(0.6)]
     private static let symbols = ["film", "sparkles.tv", "theatermasks", "music.note.tv", "popcorn", "star"]
     var body: some View {
         GeometryReader { proxy in
@@ -202,7 +207,7 @@ private struct PosterWall: View {
             }
             .rotationEffect(.degrees(-6))
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .center)
-            .background { EllipticalGradient(colors: [Brand.accent.opacity(0.3), .clear], endRadiusFraction: 0.5) }
+            .background { EllipticalGradient(colors: [Brand.cyan.opacity(0.3), .clear], endRadiusFraction: 0.5) }
             // An ellipse that reaches clear at the frame's edges, so no tile meets a hard clip.
             .mask { EllipticalGradient(stops: [.init(color: .black, location: 0), .init(color: .black.opacity(0.75), location: 0.45), .init(color: .clear, location: 1)], endRadiusFraction: 0.5) }
         }
@@ -233,6 +238,6 @@ private struct PosterWall: View {
 
 /// Neutral tile fills that track the canvas on every platform.
 private enum PosterSurface {
-    static let base = Color(light: Color(red: 0.93, green: 0.90, blue: 0.86), dark: Color(red: 0.14, green: 0.11, blue: 0.085))
-    static let raised = Color(light: Color(red: 0.89, green: 0.85, blue: 0.80), dark: Color(red: 0.22, green: 0.17, blue: 0.13))
+    static let base = Color(light: Color(red: 0.88, green: 0.905, blue: 0.94), dark: Color(red: 0.065, green: 0.09, blue: 0.165))
+    static let raised = Color(light: Color(red: 0.83, green: 0.86, blue: 0.91), dark: Color(red: 0.11, green: 0.15, blue: 0.25))
 }

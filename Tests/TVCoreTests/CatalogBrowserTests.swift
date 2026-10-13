@@ -79,3 +79,26 @@ private actor FetchCancellationProbe {
     #expect(model.videos.first?.name == "new")
     #expect(model.error == nil)
 }
+
+@MainActor @Test func leavingCatalogPageCancelsUnstructuredRequestAndAllowsReturn() async {
+    let model = CatalogBrowser()
+    let probe = FetchCancellationProbe()
+    let request = CatalogBrowser.Request.list(category: "movies", query: "", page: 2)
+    let old = Task {
+        await model.load(request) { _ in
+            await probe.start()
+            do { try await Task.sleep(for: .seconds(10)) }
+            catch { await probe.cancel(); throw error }
+            return page("old")
+        }
+    }
+    while !(await probe.started) { await Task.yield() }
+    model.cancel()
+    await old.value
+    #expect(await probe.cancelled)
+    #expect(!model.busy && !model.loaded && model.error == nil)
+    #expect(model.videos.isEmpty && model.request == request)
+    await model.load(model.request) { _ in page("returned") }
+    model.cancel()
+    #expect(model.loaded && model.videos.first?.name == "returned")
+}

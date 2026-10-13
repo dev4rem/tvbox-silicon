@@ -118,7 +118,6 @@ const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
 ${LANGS.map((lang) => `  <url><loc>${pageUrl(lang)}</loc>${links}</url>`).join("\n")}
   <url><loc>${SITE_URL}/intro/</loc></url>
-  <url><loc>${SITE_URL}/whats-new/</loc></url>
 </urlset>
 `;
 await writeFile(join(dist, "sitemap.xml"), sitemap);
@@ -148,8 +147,7 @@ ${["mac", "ios", "tv"].map((p) => `- [${install.title[p]}](${DOWNLOADS[p]}): ${i
 
 ## Optional
 
-- [Intro film](${SITE_URL}/intro/): a 100-second animated tour of the app.
-- [What’s new in 1.1](${SITE_URL}/whats-new/): an 86-second film about the built-in Bilibili source, danmaku, live rooms and casting.
+- [Intro film](${SITE_URL}/intro/): a three-minute animated tour of the app: subscriptions, plugin runtimes, the built-in Bilibili and Hongguo sources, search, playback, danmaku, live TV and casting.
 ${LANGS.filter((l) => l !== "en").map((l) => `- [${LOCALES[l].name}](${pageUrl(l)}): the website in ${LANG_NAME_EN[l]}.`).join("\n")}
 `;
 await writeFile(join(dist, "llms.txt"), llms);

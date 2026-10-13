@@ -63,6 +63,60 @@ open build/DerivedData-mac/Build/Products/Debug/TVBox-macOS.app
 
 Playback depends on the source, media format, device decoder, and network availability. Unsupported features include full CatVod/Android API compatibility, arbitrary desktop JVM applications, web video detection, magnet links, multiple-quality playback responses, XML collection APIs, EPG, cloud sync, downloads, and a complete offline library. Complex playlist extensions and header requirements still need source-by-source verification.
 
+## Built-in Hongguo source
+
+Hongguo is appended alongside Bilibili to the displayed subscription, without changing
+the imported document. It uses the bundled QuickJS runtime on macOS, iOS and tvOS.
+The web catalog provides live-action, animated and AI dramas, four rankings, search,
+and complete episode IDs. Search currently exposes one batch because the website
+ignores its page parameter; category and ranking pagination follow the source.
+
+Playback first requests the exact episode through the app's signed model endpoint
+and its returned fallback endpoint. The adapter selects H.264/HEVC and resolves
+encrypted media URLs locally. Playback registers a virtual MP4 with AVFoundation's
+resource loader. Small HTTP Range requests read the MP4 sample tables (even when
+the moov is at the end), then fetch and decrypt only requested samples using native
+AES-CTR. Seeking reads the destination ranges without downloading the preceding
+media. Responses that ignore Range or return a different range are rejected.
+App media keeps the app endpoint's User-Agent. It omits Referer initially and retries
+HTTP 403 once with the app Referer, retaining the successful policy for subsequent
+ranges. Some CDN nodes reject the web browser headers even when another node works.
+
+The player and resource loader use a roughly 60-second forward window. Decrypted
+ranges have a 16 MB memory limit and expire as the playhead advances or seeks;
+stopping playback cancels pending requests and clears those ranges. Playback creates
+no complete movie on disk. Explicit offline downloads retain the complete-file
+preparation path through `preparePlayback(_:forDownload:)`, with disposable files
+eligible for cleanup after an hour at 512 MB, or after a day regardless of size.
+If app playback is unavailable, the adapter tries the selected episode's public web
+video. It does not substitute another episode or truncate the full episode list to
+the web preview count. Availability and quality still depend on the upstream response.
+
+`swift run TVBoxProbe --hongguo-check [series ID] [episode number]` checks catalog,
+search, rankings, details, first-frame timing, bytes fetched before playback,
+paused buffering, and forward/backward seeking. `--hongguo-play <series ID> [episode number]`
+isolates playback from catalog/search availability. `HongguoTests`
+cover the QuickJS signing/crypto bridge, exact episode selection, parsing and CENC
+sample/subsample decryption using a NIST AES-CTR vector, middle-of-sample range reads,
+tail metadata, cache reuse, cancellation, the forward window, and invalid HTTP Range
+responses, app media headers, and bounded Referer retries. On tvOS, diagnostic logs
+are stored under `Library/Caches/com.tvbox.yingxia/Logs` so they can be retrieved
+from the app container after a device failure. Successful platform builds
+do not establish playback on physical iPhone or Apple TV devices.
+
+On 2026-10-12, the live probe returned all 69 episode IDs for series
+`7686713195246930968`. Episodes 4 and 69 both played at 1080×1920 on macOS,
+advanced past two seconds, and sought successfully near the end. Page 2 of all
+seven catalog/ranking categories returned items. These are sampled live checks,
+not a guarantee that every episode or title is available.
+
+The subsequent streaming check on episode 69 resolved in 0.61 s and produced its
+first frame in 1.93 s, after receiving 2.84 MB of the 13.28 MB, 157.5-second file.
+With playback paused at 2.1 s, buffered media ended at 63.7 s and the received-byte
+count stayed unchanged across consecutive checks. Seeking near the end and back
+to 5 s both succeeded. These timings are one local network sample, not a latency
+guarantee.
+
 ## Languages
 
 English (`en`) is the source and fallback language. Traditional Chinese (`zh-Hant`), Simplified Chinese (`zh-Hans`), and Japanese (`ja`) are supported on all three platforms. The app follows the system's preferred languages or Apple's per-app language setting.
@@ -103,6 +157,8 @@ Scripts/verify.sh
 ```
 
 The localization check verifies translation coverage, format arguments, and static Swift key references. `Scripts/verify.sh` runs the Swift tests and unsigned macOS, iOS device-SDK, and tvOS device-SDK builds. Successful builds do not establish plugin compatibility or device playback support.
+
+`Scripts/test-tv-ui.sh <tvOS simulator UUID>` drives the Siri Remote in a separate tvOS bundle (no JAR runtime, isolated data) against `Scripts/qa-server.py`: `TVNavigationUITests` opens a video page whose details never arrive (`-qaPage open-detail:qa-stall:1`) and checks that Back returns to the previous page instead of leaving the app. Focus starts in the tab sidebar, so the test moves right into the page.
 
 The command-line probe supports controlled static DEX execution and live-playlist inspection:
 
@@ -217,6 +273,30 @@ Open Settings → Cloud Drive Accounts → Manage Cloud Accounts. Quark and UC o
 The host supplies `Cloud-drive` JSON (`quarkCookie`, `ucCookie`, `ucToken`, `token`) and existing `cookie`/`uc_cookie`/`token` extension references through a per-process loopback server with an unguessable URL. It preserves other source settings. CatVod proxy responses retain status, headers, range requests, and streaming bodies. FTY `ProxyOrigin.getUrl` and `getOwnProxyUrl` use the host's server, including its separate `proxyDrive` routing. Recent proxy traffic keeps the source process alive.
 
 Validation includes controlled configuration/streaming checks, Swift tests, and a real WoGG initialization with synthetic credentials: all four cloud initializers fetched the configuration, and Quark retained credential state. This does **not** verify account authorization or end-to-end playback. Real playback still needs the user's valid account, provider access, compatible media, and a working source. Android plugin QR dialogs are not emulated; use the account settings login page.
+
+### Cloud drive playback
+
+A plugin's cloud-drive file (a `/drive/` address on the plugin's loopback proxy) is not played through that proxy. FTY's Quark proxy starts a set of download threads for every range AVPlayer opens; on a 4K file (1.4–2 GB) the abandoned ranges exhausted the embedded JVM's threads (`OutOfMemoryError: unable to create native thread`) and playback stalled at 0 bytes/s. Instead, the Java host's `directMedia` command asks the proxy for two bytes and records the CDN request the plugin makes to answer them (`HttpDiagnostics` sees every plugin OkHttp call): its URL, headers and file length. `CloudStreams` then serves AVPlayer from that address through a resource loader, in 2 MB chunks over up to six parallel connections (drives cap each connection), reading a bounded window ahead of each reader. A file whose audio sits far from its video is read in two places at once, so the stream tracks several readers and never cancels a chunk someone waits on. The container comes from the file's first bytes, not its name (a 4K MP4 named `.mp3`). An expired address is resolved again through the plugin; when no CDN request is revealed, playback falls back to the proxy.
+
+Two AVFoundation rules the loader follows: answer from a copied `Data`, never a slice of a cached chunk, and never call `respond(with:)` or `finishLoading` while holding the delegate queue (AVFoundation can wait on that queue while holding its request lock, which deadlocked playback). When a newer request arrives for the same stream, deliveries to older requests pause briefly so AVFoundation's cancel lands first; bytes handed to a request it had just abandoned made it report the movie as damaged. `CloudStreamsTests` cover byte-exact reads, two distant readers, expired addresses, and, with `TVBOX_CLOUD_MEDIA=<an MP4>`, AVPlayer opening, playing and seeking a movie through the loader three times; they serve ranges from memory (`RangeServer`), not a shared port.
+
+On the living-room Apple TV (2026-10-13), FTY's 4K Quark episodes (1.63 GB MP4, and a 1.94 GB MP4 named `.mp3`) played at 3840×2160 in real time with 2.0–3.8 MB/s from the CDN, where the proxy had managed 0.4–0.6 MB/s and then stalled. One network and one account; not a guarantee for every drive or file.
+
+The same lookup covers every drive whose proxy fetches the file with ranged requests, whatever the plugin calls its route: `/drive/` addresses and the plugin's own `/media` proxy (Fish's drives answer `/proxy?do=…`, which the bridge routes to `/media`). Fish downloads ranges over `HttpURLConnection` on its own threads, not OkHttp, so the converted plugin's `getResponseCode()`/`getInputStream()` calls are rewritten to `HttpDiagnostics` as well (conversion `host-v13`; a version bump converts each plugin class again once). A proxy that does not answer the probe with a byte range (a playlist, a page) is left to the proxy at once. Downloads of drive episodes use the same direct address (`Store.resolveDownload`), and take their file type from the first bytes. Playback that still streams through a plugin logs `plugin proxy stream drive|media do=<x>` in Diagnostics.
+
+`TVBoxProbe --drive-check <subscription> <source> [search]` opens a source's first video and, for each drive it offers, prints DIRECT (CDN host, size, lookup time, read speed) or PROXY. Run it with `TVBOX_DISABLE_SANDBOX=1` from a remote shell, where `sandbox-exec` cannot start the JVM. Drives that need an account read it from `CloudDrive/accounts.json`, as the app does. On 2026-10-13 Fish's 玩偶 Quark episodes (原画 and 无限) went DIRECT with a 0.3–0.6 s lookup; 夸克智 failed inside the plugin (HTTP 404 from Quark), Baidu hung without an account, and 123/光鸭 need accounts.
+
+### Plugin requests that never end
+
+Android plugins wait for a QR sign-in by showing a dialog and polling until someone scans it. This host shows no dialog, so without a host check the request never returns, and because a source takes one request at a time, every later request for that source waits behind it. FTY names its lines after drive nicknames: 夸父 is Quark, 优汐 is UC, 嘟嘟 is Baidu, 阿狸 is Aliyun. On 2026-10-13 its Baidu and Aliyun lines without an account still hung after 120 s.
+
+- `HttpDiagnostics.qrLoginDrive` recognizes the QR endpoints of Quark, UC, Baidu (`passport.baidu.com` getqrcode/unicast) and Aliyun (`passport.aliyundrive.com/newlogin/qrcode/…` and the open-API variants). Quark and UC throw `CloudLoginRequired` and the app offers its own sign-in. Baidu and Aliyun keep the plugin's sign-in: `LoginPrompt` reads the code from the plugin's own code-creating response (Baidu's `imgurl`, Aliyun's `codeContent`), writes it to `login-prompt.json` in the source's session folder (`_folder`), and moves the request's deadline out by 180 s. `PluginSignIn` (Swift) watches that file while a non-search request runs and `PluginSignInView` shows the code; once it is scanned the plugin saves the account itself (Baidu `files/mybd_cookie`, Aliyun `files/ali_*`) and the playback request continues. A code-creating response without a code still hands the sign-in back. The detail page doesn't start a title on a Baidu or Aliyun line.
+- FTY saves the account after the scan but only its Android dialog code tells the waiting request, so that request would wait out its deadline. `LoginPrompt.confirms` spots the confirmation (Baidu's `qrbdusslogin` setting `BDUSS`, Aliyun's `qrCodeStatus: CONFIRMED`), the request ends with `SignedIn` 1.5 s (Baidu) or 4 s (Aliyun) later, and `InProcessHost` retires that runtime and serves the request again from a fresh one with a fresh deadline. The fresh spider reads the saved account. `login-prompt.json` gets `signedIn: true`, and the app closes the code. On the living-room Apple TV (2026-10-14) a Baidu scan returned the playback link 24 s after confirming, including the restart.
+- Settings → Cloud Drive Accounts also signs in to Baidu Netdisk and Aliyun Drive with a code to scan (`CloudDriveQRLogin`: Baidu's passport QR login sets `BDUSS`/`STOKEN`/`PTOKEN`, kept as `baiduCookie`; Aliyun's `bizExt` carries the refresh token, kept as `token`), on the Mac too. FTY keeps its own copies as guard-encrypted JSON (`files/mybd_cookie`: `bduss`, `stoken`, `ptoken`, `devuid`; `files/ali_user`: `refresh_token`). `CloudDriveBridge.syncFtyAccounts` writes the app's Baidu account into `mybd_cookie` (`DexNative.encrypt`) before the spider starts, and offers a sign-in only the plugin has back through `plugin-accounts.json`, which `EmbeddedJarHost` adopts into the app's accounts. A sign-in through the plugin's code is adopted too (its `signedIn` notice carries the account), so one scan serves every source. Signing out also removes the plugin's copies.
+- Every request carries a stop time (`stopAt`): the app's `cancel` (going back, choosing another title, the worker's 15-minute limit) sets it to now, and the spider's deadline (`EmbeddedJarHost.deadline`: play 90 s, search 60 s, others 150 s, from when the spider starts on it) sets it ahead. `SystemClock.sleep`, OkHttp calls and the rewritten `HttpURLConnection` calls check it and throw `RequestStopped`, an `Error`, so plugin `catch (Exception)` loops can't swallow it. The app reports it as `source_timeout`.
+- A request still running 15 s after its stop time (`OpeningGate.STUCK_GRACE_MILLIS`; it waits somewhere the host can't reach) gets its spider retired: the next request opens a fresh one, and the old runtime closes when that request returns.
+- Host commands (`directMedia`, `recoverProxy`) bypass the plugin request slots (`SerializedPluginWorker.immediate`), so starting a working video never waits behind a stuck line.
+- `embedded-jvm.log` logs `PLUGIN_REQUEST <time> <kind> [flag=…]`, `PLUGIN_STOPPED`, `PLUGIN_RUNTIME_RETIRED`; past 2 MB at launch it moves to `embedded-jvm.previous.log`.
 
 ### Software update and What's New
 

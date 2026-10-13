@@ -18,16 +18,21 @@ public final class InProcessHost {
     private static final LinkedHashMap<String, Runtime> runtimes = new LinkedHashMap<>(4, 0.75f, true);
     /** Requests share it; closing every runtime waits for them and holds it alone. Fair, so a close is not starved. */
     private static final java.util.concurrent.locks.ReentrantReadWriteLock gate = new java.util.concurrent.locks.ReentrantReadWriteLock(true);
-    /** Requests in flight per runtime id; a busy runtime is never closed. Guarded by the class lock. */
-    private static final java.util.HashMap<String, Integer> busy = new java.util.HashMap<>();
-    /** {@code host} is a SharedPluginRuntime when shared, otherwise a single-source PluginSession. */
-    private record Runtime(URLClassLoader loader, Object host, boolean shared, java.nio.file.Path cache) {}
+    /** Requests in flight per runtime; a busy runtime is never closed. Guarded by the class lock. */
+    private static final java.util.IdentityHashMap<Runtime, Integer> busy = new java.util.IdentityHashMap<>();
     /**
-     * Cancellation flags of requests in flight, by the app's request id. The app sends
-     * {@code {"command":"cancel","request":id}} when nobody waits for a request any more; a cancel
-     * can arrive before its request does, so either side may create the flag.
+     * Runtimes taken out of service while a request in them would not end (see OpeningGate.Stuck).
+     * Each closes once that request returns. Guarded by the class lock.
      */
-    private static final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicBoolean> cancellations = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.Set<Runtime> retired = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    /** {@code host} is a SharedPluginRuntime when shared, otherwise a single-source PluginSession. */
+    private record Runtime(URLClassLoader loader, Object host, boolean shared, java.nio.file.Path cache, OpeningGate requests) {}
+    /**
+     * Stop times of requests in flight, by the app's request id (see OpeningGate). The app sends
+     * {@code {"command":"cancel","request":id}} when nobody waits for a request any more; a cancel
+     * can arrive before its request does, so either side may create the entry.
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong> cancellations = new java.util.concurrent.ConcurrentHashMap<>();
 
     public static void closeAll() throws Exception {
         gate.writeLock().lock();
@@ -77,10 +82,22 @@ public final class InProcessHost {
         String requestId = "";
         try {
             JSONObject input = new JSONObject(inputText);
+            if ("recoverProxy".equals(input.optString("command"))) return recoverProxy(input.getString("url"));
+            if ("directMedia".equals(input.optString("command"))) return directMedia(input.getString("url"));
             if ("trim".equals(input.optString("command"))) return new JSONObject().put("result", trim("memory pressure", true)).toString();
             if ("cancel".equals(input.optString("command"))) return cancel(input.optString("request"));
             requestId = input.optString("request");
-            if (!requestId.isEmpty()) input.put("cancelled", (Object) cancellations.computeIfAbsent(requestId, id -> new java.util.concurrent.atomic.AtomicBoolean()));
+            var stopAt = requestId.isEmpty() ? new java.util.concurrent.atomic.AtomicLong()
+                : cancellations.computeIfAbsent(requestId, id -> new java.util.concurrent.atomic.AtomicLong());
+            input.put("stopAt", (Object) stopAt);
+            // The spider sees its stop time and deadline through its own parameters.
+            var params = input.optJSONObject("params");
+            if (params != null) {
+                params.put("_stopAt", (Object) stopAt);
+                // A Baidu or Aliyun sign-in code goes to this source's session folder (LoginPrompt).
+                if (input.has("cache")) params.put("_folder", input.optString("cache"));
+                if (input.has("deadline")) params.put("_deadline", input.optLong("deadline"));
+            }
             for (int attempt = 1; ; attempt++) {
                 try {
                     var lock = gate.readLock();
@@ -107,12 +124,41 @@ public final class InProcessHost {
 
     private static String cancel(String requestId) {
         if (requestId.isEmpty()) return "{\"result\":false}";
-        // A cancel that lost the race with its request's end leaves a set flag behind; keep that bounded.
-        if (cancellations.size() > 256) cancellations.values().removeIf(java.util.concurrent.atomic.AtomicBoolean::get);
-        cancellations.computeIfAbsent(requestId, id -> new java.util.concurrent.atomic.AtomicBoolean()).set(true);
+        long now = System.currentTimeMillis();
+        // A cancel that lost the race with its request's end leaves an entry behind; keep that bounded.
+        if (cancellations.size() > 256) cancellations.values().removeIf(stop -> stop.get() > 0 && stop.get() < now - 60_000);
+        cancellations.computeIfAbsent(requestId, id -> new java.util.concurrent.atomic.AtomicLong())
+            .accumulateAndGet(now, (current, next) -> current == 0 ? next : Math.min(current, next));
         System.err.println("PLUGIN_CANCEL " + requestId);
         synchronized (InProcessHost.class) { InProcessHost.class.notifyAll(); }
         return "{\"result\":true}";
+    }
+
+    private static String recoverProxy(String address) throws Exception {
+        gate.readLock().lock();
+        try {
+            synchronized (InProcessHost.class) {
+                for (Runtime runtime : runtimes.values()) {
+                    String recovered = (String)runtime.host().getClass().getMethod("recoverProxy", String.class).invoke(runtime.host(), address);
+                    if (recovered != null) return new JSONObject().put("result", recovered).toString();
+                }
+            }
+            return new JSONObject().put("result", address).toString();
+        } finally { gate.readLock().unlock(); }
+    }
+
+    /** {@code {"command":"directMedia","url":…}}: the CDN request behind a cloud-drive proxy address. */
+    private static String directMedia(String address) throws Exception {
+        gate.readLock().lock();
+        try {
+            java.util.List<Object> hosts;
+            synchronized (InProcessHost.class) { hosts = runtimes.values().stream().map(Runtime::host).toList(); }
+            for (Object host : hosts) {
+                Object media = host.getClass().getMethod("directMedia", String.class).invoke(host, address);
+                if (media != null) return new JSONObject().put("result", new JSONObject((String) media)).toString();
+            }
+            return new JSONObject().put("result", JSONObject.NULL).toString();
+        } finally { gate.readLock().unlock(); }
     }
 
     private static String cancelled() {
@@ -120,8 +166,7 @@ public final class InProcessHost {
     }
 
     private static void checkCancelled(JSONObject input) {
-        var flag = OpeningGate.cancelled(input);
-        if (flag != null && flag.get()) throw new java.util.concurrent.CancellationException("The app no longer needs this request.");
+        if (OpeningGate.stopped(OpeningGate.cancelled(input))) throw new java.util.concurrent.CancellationException("The app no longer needs this request.");
     }
 
     /**
@@ -141,38 +186,78 @@ public final class InProcessHost {
     private static String perform(JSONObject input) throws Throwable {
         boolean shared = shareable(input);
         String id = shared ? "runtime:" + input.getString("runtime") : "session:" + input.getString("session");
-        checkCancelled(input);
-        Runtime runtime = acquire(id, shared, input);
-        try {
+        for (int attempt = 1; ; attempt++) {
             checkCancelled(input);
-            ClassLoader previous = Thread.currentThread().getContextClassLoader();
+            Runtime runtime = acquire(id, shared, input);
             try {
-                Thread.currentThread().setContextClassLoader(runtime.loader());
-                Object result;
+                checkCancelled(input);
+                ClassLoader previous = Thread.currentThread().getContextClassLoader();
                 try {
-                    if (runtime.shared()) {
-                        result = runtime.host().getClass().getMethod("request", JSONObject.class).invoke(runtime.host(), input);
-                    } else {
-                        // A single-source session is one spider; it takes one request at a time.
-                        synchronized (runtime.host()) {
-                            result = runtime.host().getClass().getMethod("request", JSONObject.class).invoke(runtime.host(), input.getJSONObject("params"));
+                    Thread.currentThread().setContextClassLoader(runtime.loader());
+                    Object result;
+                    try {
+                        if (runtime.shared()) {
+                            result = runtime.host().getClass().getMethod("request", JSONObject.class).invoke(runtime.host(), input);
+                        } else {
+                            // A single-source session is one spider; it takes one request at a time.
+                            runtime.requests().enter(OpeningGate.search(input), OpeningGate.cancelled(input));
+                            try {
+                                // A warm FTY session runs on a new worker thread. Start progress in
+                                // its own class loader on every request, not only during plugin init.
+                                runtime.loader().loadClass("tvbox.runtime.PreparationProgress")
+                                    .getMethod("begin", java.nio.file.Path.class).invoke(null, runtime.cache());
+                                result = runtime.host().getClass().getMethod("request", JSONObject.class).invoke(runtime.host(), input.getJSONObject("params"));
+                            } finally { runtime.requests().leave(); }
                         }
+                    } catch (Throwable error) {
+                        if (HeapBudget.outOfMemory(error)) throw new OutOfMemoryError("Java heap space");
+                        Throwable cause = error;
+                        while (cause instanceof InvocationTargetException && cause.getCause() != null) cause = cause.getCause();
+                        if (cause instanceof java.util.concurrent.CancellationException) return cancelled();
+                        // An earlier request is still running in this spider long after it was told to
+                        // stop. Take the runtime out of service and serve this request from a fresh one.
+                        if (cause instanceof OpeningGate.Stuck && attempt == 1) { retire(id, runtime); continue; }
+                        // The plugin's own sign-in completed, but only a fresh spider reads the saved account.
+                        if (attempt == 1 && signedIn(cause)) { retire(id, runtime); OpeningGate.freshDeadline(input); continue; }
+                        return runtimeFailure(runtime, error);
                     }
-                } catch (Throwable error) {
-                    if (HeapBudget.outOfMemory(error)) throw new OutOfMemoryError("Java heap space");
-                    Throwable cause = error;
-                    while (cause instanceof InvocationTargetException && cause.getCause() != null) cause = cause.getCause();
-                    if (cause instanceof java.util.concurrent.CancellationException) return cancelled();
-                    return runtimeFailure(runtime, error);
-                }
-                return new JSONObject().put("result", result).toString();
-            } finally { Thread.currentThread().setContextClassLoader(previous); }
-        } finally { release(id); }
+                    return new JSONObject().put("result", result).toString();
+                } finally { Thread.currentThread().setContextClassLoader(previous); }
+            } finally { release(runtime); }
+        }
     }
 
-    private static synchronized void release(String id) {
-        busy.computeIfPresent(id, (key, count) -> count > 1 ? count - 1 : null);
-        InProcessHost.class.notifyAll();
+    private static void release(Runtime runtime) {
+        boolean close;
+        synchronized (InProcessHost.class) {
+            busy.computeIfPresent(runtime, (key, count) -> count > 1 ? count - 1 : null);
+            // A retired runtime closes once its last request returns, unless it still serves a stream.
+            close = !busy.containsKey(runtime) && retired.contains(runtime) && !streamingQuietly(runtime);
+            if (close) retired.remove(runtime);
+            InProcessHost.class.notifyAll();
+        }
+        if (close) {
+            try { close(runtime); } catch (Exception error) { error.printStackTrace(System.err); }
+            System.err.println("PLUGIN_RUNTIME_CLOSED retired");
+        }
+    }
+
+    private static void retire(String id, Runtime runtime) {
+        synchronized (InProcessHost.class) {
+            runtime.requests().retire();
+            if (runtimes.get(id) == runtime) runtimes.remove(id);
+            retired.add(runtime);
+        }
+        System.err.println("PLUGIN_RUNTIME_RETIRED " + java.time.LocalTime.now().withNano(0) + " " + id);
+    }
+
+    /** HttpDiagnostics.SignedIn from the runtime's own class loader. */
+    static boolean signedIn(Throwable cause) {
+        return cause != null && cause.getClass().getName().equals("tvbox.runtime.HttpDiagnostics$SignedIn");
+    }
+
+    private static boolean streamingQuietly(Runtime runtime) {
+        try { return streaming(runtime); } catch (Exception unreadable) { return false; }
     }
 
     /** Serializes runtime start-up without holding the class lock, which every finishing request needs. */
@@ -198,7 +283,7 @@ public final class InProcessHost {
             Runtime runtime = open(shared, input);
             synchronized (InProcessHost.class) {
                 runtimes.put(id, runtime);
-                busy.merge(id, 1, Integer::sum);
+                busy.merge(runtime, 1, Integer::sum);
                 return runtime;
             }
         } finally { opening.leave(); }
@@ -207,7 +292,7 @@ public final class InProcessHost {
     /** Guarded by the class lock. */
     private static Runtime claim(String id) {
         Runtime runtime = runtimes.get(id);
-        if (runtime != null) busy.merge(id, 1, Integer::sum);
+        if (runtime != null) busy.merge(runtime, 1, Integer::sum);
         return runtime;
     }
 
@@ -222,9 +307,18 @@ public final class InProcessHost {
             boolean waiting = false;
             while (iterator.hasNext()) {
                 var entry = iterator.next();
-                if (busy.containsKey(entry.getKey())) { waiting = true; continue; }
-                if (streaming(entry.getValue())) continue;
-                close(entry.getValue()); iterator.remove(); return;
+                Runtime candidate = entry.getValue();
+                if (busy.containsKey(candidate)) {
+                    // A request that will not end must not hold a slot other sources need.
+                    if (candidate.requests().stuck()) {
+                        candidate.requests().retire(); retired.add(candidate); iterator.remove();
+                        System.err.println("PLUGIN_RUNTIME_RETIRED " + java.time.LocalTime.now().withNano(0) + " " + entry.getKey() + " (slot)");
+                        return;
+                    }
+                    waiting = true; continue;
+                }
+                if (streaming(candidate)) continue;
+                close(candidate); iterator.remove(); return;
             }
             if (!waiting) {
                 // Both proxies served media lately, but the app plays one stream at a time: the source
@@ -268,11 +362,18 @@ public final class InProcessHost {
         while (needed && iterator.hasNext()) {
             var entry = iterator.next();
             try {
-                if (busy.containsKey(entry.getKey()) || streaming(entry.getValue())) continue;
+                if (busy.containsKey(entry.getValue()) || streaming(entry.getValue())) continue;
                 iterator.remove(); closed++;
                 close(entry.getValue());
             } catch (Exception error) { error.printStackTrace(System.err); }
             needed = everything || HeapBudget.low();
+        }
+        // Retired runtimes whose stuck request has returned but which were still streaming then.
+        for (var stale = retired.iterator(); stale.hasNext(); ) {
+            Runtime runtime = stale.next();
+            if (busy.containsKey(runtime) || streamingQuietly(runtime)) continue;
+            stale.remove(); closed++;
+            try { close(runtime); } catch (Exception error) { error.printStackTrace(System.err); }
         }
         // Collected heap is also returned to the OS (MaxHeapFreeRatio), which memory pressure needs.
         if (everything) System.gc();
@@ -304,7 +405,7 @@ public final class InProcessHost {
             Object value = shared
                 ? loader.loadClass("tvbox.runtime.SharedPluginRuntime").getMethod("open", JSONObject.class).invoke(null, input)
                 : loader.loadClass("tvbox.runtime.NativeProbe").getMethod("initialize", JSONObject.class).invoke(null, input);
-            return new Runtime(loader, value, shared, java.nio.file.Path.of(input.getString("cache")));
+            return new Runtime(loader, value, shared, java.nio.file.Path.of(input.getString("cache")), new OpeningGate(true));
         } catch (Throwable failure) {
             try { loader.loadClass("android.os.Looper").getMethod("shutdown").invoke(null); } catch (Throwable cleanup) { failure.addSuppressed(cleanup); }
             try { loader.loadClass("tvbox.runtime.CloudDriveBridge").getMethod("closeCurrent").invoke(null); } catch (Throwable cleanup) { failure.addSuppressed(cleanup); }

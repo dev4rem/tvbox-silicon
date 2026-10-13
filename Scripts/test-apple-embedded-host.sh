@@ -10,7 +10,7 @@ esac
 OUT="$ROOT/build/AppleRuntime/$PLATFORM"
 APP="$ROOT/build/apple-runtime/EmbeddedHostTest-$TARGET.app"
 mkdir -p "$APP"
-rsync -a "$OUT/Resources/lib/" "$APP/lib/"
+rsync -a --delete "$OUT/Resources/lib/" "$APP/lib/"
 rsync -a --delete "$OUT/Resources/JavaHost/" "$APP/JavaHost/"
 cp build/JavaHost/host.jar "$APP/JavaHost/host.jar"
 cp build/runtime-audit/downloads/ce647a3d82a319476b0bf0f138ebbdd05105e5a149dda8b3ca3a5d37d83e5cac "$APP/plugin.jar"

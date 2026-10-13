@@ -4,6 +4,7 @@ import TVCore
 /// The Bilibili account: sign in by scanning a code with the Bilibili phone app (there is no
 /// browser on Apple TV), or sign out. Signing in unlocks 1080P+ and the account's PGC rights.
 struct BilibiliAccountView: View {
+    @Environment(\.dismiss) private var dismiss
     @State private var account = BilibiliAccount.load()
     @State private var login: BilibiliQRLogin?
     @State private var scanned = false
@@ -12,7 +13,7 @@ struct BilibiliAccountView: View {
     @State private var attempt = 0
 
     var body: some View {
-        SettingsPage(title: L10n.text("Bilibili Account")) {
+        SettingsPage(title: L10n.text("Bilibili Account"), symbol: "play.tv") {
             if account.signedIn {
                 SettingsGroup(footer: L10n.text("Bilibili plays the qualities your account allows. Sign-in details stay on this device.")) {
                     SettingsRow(symbol: "person.crop.circle.fill", tint: .pink, title: account.name.isEmpty ? L10n.text("Signed In") : account.name,
@@ -25,6 +26,11 @@ struct BilibiliAccountView: View {
                     HStack(alignment: .center, spacing: spacing) { code; details }
                     VStack(alignment: .leading, spacing: spacing) { code; details }
                 }
+                #if os(tvOS)
+                .frame(maxWidth: .infinity)
+                #else
+                .padding(.vertical, 10)
+                #endif
             }
         }
         .task(id: attempt) { await run() }
@@ -59,6 +65,8 @@ struct BilibiliAccountView: View {
             }
         }
         .frame(width: codeSize, height: codeSize)
+        // While waiting there is no button, and Back with nothing focused would leave the app.
+        .loadingFocus(takeFocus: true) { dismiss() }
     }
 
     @ViewBuilder private var status: some View {
@@ -103,7 +111,7 @@ struct BilibiliAccountView: View {
 
     private var codeSize: CGFloat {
         #if os(tvOS)
-        400
+        320
         #else
         220
         #endif

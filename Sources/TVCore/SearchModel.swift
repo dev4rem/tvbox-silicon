@@ -18,7 +18,9 @@ import Observation
     public private(set) var loadingMore = false
     /// The next page to ask each source for; `Int.max` once a source has no more.
     private var nextPage: [String: Int] = [:]
-    private var moreTask: Task<Void, Never>?
+    private(set) var moreTask: Task<Void, Never>?
+    private var pageGeneration = UUID()
+    private var resultsVisible = true
     /// Changes only with a new search, unlike `generation`, which pausing also changes.
     private var runID = UUID()
     private static let sourceKey = "searchSource"
@@ -68,42 +70,45 @@ import Observation
     /// Fetches the next page of a source (nil: of every matching source that has one) and appends
     /// what is new; a source that answers nothing new is done.
     public func loadMore(_ source: String?, config: Subscription) {
-        guard !loadingMore, !keyword.isEmpty else { return }
+        guard resultsVisible, !loadingMore, !suspended, !keyword.isEmpty else { return }
         let targets = (source.map { id in matches.filter { $0.id == id } } ?? matches)
             .filter { (nextPage[$0.id] ?? 2) <= ($0.page?.pageCount ?? 1) }
         guard !targets.isEmpty else { return }
         loadingMore = true
-        let run = runID, keyword = keyword, http = http
+        let run = runID, pageToken = pageGeneration, keyword = keyword, http = http
         moreTask = Task {
-            await withTaskGroup(of: (String, Int, CatalogPage?).self) { group in
-                for result in targets.prefix(6) {
-                    let page = nextPage[result.id] ?? 2
-                    let site = result.site
-                    group.addTask {
-                        let client = CatalogClient(site: site, origin: config.origin, http: http, jarURL: config.spiderURL)
-                        return (site.id, page, try? await client.list(category: nil, query: keyword, page: page))
-                    }
-                }
-                for await (id, page, answer) in group {
-                    guard self.runID == run else { continue }
-                    let known = Set(self.videos(for: id).map(\.id))
-                    let fresh = (answer?.videos ?? []).filter { !known.contains($0.id) }
-                    self.nextPage[id] = fresh.isEmpty ? Int.max : page + 1
-                    if !fresh.isEmpty { self.batches.append(SearchBatch(source: id, page: page, videos: fresh)) }
-                }
+            // Pagination is one queue, not a second burst of six plugin requests.
+            for result in targets.prefix(6) {
+                guard !Task.isCancelled, self.pageGeneration == pageToken else { break }
+                let page = self.nextPage[result.id] ?? 2
+                let client = CatalogClient(site: result.site, origin: config.origin, http: http, jarURL: config.spiderURL)
+                let answer = try? await client.list(category: nil, query: keyword, page: page)
+                guard !Task.isCancelled, self.runID == run, self.pageGeneration == pageToken else { break }
+                let known = Set(self.videos(for: result.id).map(\.id))
+                let fresh = (answer?.videos ?? []).filter { !known.contains($0.id) }
+                self.nextPage[result.id] = fresh.isEmpty ? Int.max : page + 1
+                if !fresh.isEmpty { self.batches.append(SearchBatch(source: result.id, page: page, videos: fresh)) }
             }
-            if self.runID == run { self.loadingMore = false }
+            if self.runID == run, self.pageGeneration == pageToken {
+                self.loadingMore = false; self.moreTask = nil
+            }
         }
     }
 
+    private func cancelPages() {
+        pageGeneration = UUID()
+        moreTask?.cancel(); moreTask = nil; loadingMore = false
+    }
+
     private func clearPages() {
-        moreTask?.cancel(); moreTask = nil
+        cancelPages()
         batches = []; nextPage = [:]; loadingMore = false; runID = UUID()
     }
 
     public func stop() {
         generation = UUID()
         task?.cancel(); task = nil
+        cancelPages()
         stopped = busy; busy = false
         suspended = false
     }
@@ -112,12 +117,16 @@ import Observation
     /// section), so its plugin calls stop competing with what they are looking at. Sources that
     /// already answered keep their results; the rest run again on `resumeSuspended`.
     public func suspend() {
-        guard busy else { return }
+        resultsVisible = false
+        let unfinished = busy || suspended
+        let wasStopped = stopped
         stop()
-        suspended = true
+        stopped = wasStopped || unfinished
+        suspended = unfinished
     }
 
     public func resumeSuspended(config: Subscription) {
+        resultsVisible = true
         guard suspended else { return }
         suspended = false
         resume(config: config)
@@ -144,7 +153,7 @@ import Observation
         // The source chosen last time stays chosen while it is searched.
         let preferred = UserDefaults.standard.string(forKey: Self.sourceKey)
         selectedSource = sites.contains { $0.id == preferred } ? preferred : nil; scrollID = nil
-        rank = Dictionary(SourceStrategy.arrange(sites) { _ in true }.enumerated().map { ($1.id, $0) }) { first, _ in first }
+        rank = Dictionary(SourceStrategy.arrange(sites, where: { _ in true }, failing: failing(config)).enumerated().map { ($1.id, $0) }) { first, _ in first }
         total = sites.count
         if let hit = cache[value], Date().timeIntervalSince(hit.created) < 300 {
             results = hit.results; total = hit.total; completed = results.count; stopped = false
@@ -177,10 +186,13 @@ import Observation
             #if os(macOS)
             warm = await LocalJarHost.shared.reusableSourceKeys()
             #endif
-            let arranged = SourceStrategy.arrange(sites) { _ in true }
+            let failing = self.failing(config)
+            let arranged = SourceStrategy.arrange(sites, where: { _ in true }, failing: failing)
             // Built-in sources answer first: they are quick and the ones most often filtered to.
-            let ordered = (arranged.filter { warm.contains($0.key) } + arranged.filter { !warm.contains($0.key) })
+            // Sources that keep failing go last, warm or not, so they never hold up the rest.
+            let preferred = (arranged.filter { warm.contains($0.key) } + arranged.filter { !warm.contains($0.key) })
                 .enumerated().sorted { ($0.element.isBuiltIn ? 0 : 1, $0.offset) < ($1.element.isBuiltIn ? 0 : 1, $1.offset) }.map(\.element)
+            let ordered = preferred.filter { !failing($0) } + preferred.filter(failing)
             guard self.generation == token else { return }
             await GlobalSearch.search(sites: ordered, origin: config.origin, jarURL: config.spiderURL, query: keyword, http: self.http) { result in
                 await self.receive(result, token: token)
@@ -192,6 +204,13 @@ import Observation
                 if self.cache.count > 6, let oldest = self.cache.min(by: { $0.value.created < $1.value.created })?.key { self.cache[oldest] = nil }
             }
         }
+    }
+
+    /// Sources in a `SourceHealth` cooldown, asked and listed after the others.
+    private func failing(_ config: Subscription) -> @Sendable (Site) -> Bool {
+        let now = Date()
+        let down = Set(config.sites.filter { SourceHealth.shared.deprioritized($0, origin: config.origin, now: now) }.map(\.id))
+        return { down.contains($0.id) }
     }
 
     private func receive(_ result: SearchSourceResult, token: UUID) {

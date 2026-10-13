@@ -5,6 +5,10 @@ import TVCore
     @Environment(\.scenePhase) private var scenePhase
     @State private var store = Store()
     @State private var updates = Updates()
+    #if os(iOS)
+    /// An Apple TV's Douyin code, scanned with the Camera.
+    @State private var douyinHandoff: DouyinHandoff.Link?
+    #endif
     init() {
         #if os(macOS)
         // Use thin overlay scrollers app-wide. With "Show scroll bars: Always" or a mouse attached,
@@ -36,6 +40,10 @@ import TVCore
                 }
                 #if os(tvOS) || os(macOS)
                 .task { BilibiliCastController.shared.start(store) }
+                #endif
+                #if os(iOS)
+                .onOpenURL { url in if let link = DouyinHandoff.Link(url) { douyinHandoff = link } }
+                .sheet(item: $douyinHandoff) { DouyinHandoffView(link: $0) }
                 #endif
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .background {

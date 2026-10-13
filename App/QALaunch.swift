@@ -12,6 +12,7 @@ enum QALaunch {
         switch UserDefaults.standard.string(forKey: "qaSection") {
         case "home": .home
         case "live": .live
+        case "music": .music
         case "search": .search
         case "sites": .sites
         case "favorites": .favorites
@@ -38,7 +39,14 @@ enum QALaunch {
             }
         }
         if UserDefaults.standard.bool(forKey: "qaResetCache") { MediaCache.shared.clear() }
-        if let subscription = UserDefaults.standard.string(forKey: "qaSubscription") { await store.importSubscription(address: subscription) }
+        if let subscription = UserDefaults.standard.string(forKey: "qaSubscription") {
+            // With isolated data the QA subscription is the only one, as before several subscriptions:
+            // one left from an earlier run would come first and win the duplicate source keys.
+            if UserDefaults.standard.bool(forKey: "qaIsolatedData") {
+                for entry in store.subscriptions where entry.address != subscription { store.removeSubscription(entry) }
+            }
+            await store.importSubscription(address: subscription)
+        }
         else if store.subscription == nil { await store.importSubscription() }
         if QASweep.enabled, let config = store.subscription { Task.detached(priority: .utility) { await QASweep.run(config) } }
         if let section { store.section = section }
@@ -47,9 +55,13 @@ enum QALaunch {
             try? await Task.sleep(for: .seconds(2))
             store.searchVideos(String(page.dropFirst(7)))
         }
-        // `-qaPlayLive <room>` opens a Bilibili Live room in the player.
-        if let room = UserDefaults.standard.string(forKey: "qaPlayLive"), let url = URL(string: "\(BilibiliLive.scheme)://room/\(room)") {
-            store.playing = Channel(name: "Live \(room)", group: L10n.text("Bilibili Live"), url: url)
+        // `-qaPlayLive [<platform>:]<room>` opens a live room (Bilibili by default) in the player.
+        if let target = UserDefaults.standard.string(forKey: "qaPlayLive") {
+            let parts = target.split(separator: ":", maxSplits: 1).map(String.init)
+            let platform = parts.count == 2 ? LivePlatform(rawValue: parts[0]) ?? .bilibili : .bilibili
+            if let room = parts.last, let url = URL(string: "\(platform.scheme)://room/\(room)") {
+                store.playing = Channel(name: "Live \(room)", group: platform.name, url: url)
+            }
         }
         // `-qaPlay <site key>:<video id>[:<episode index>]` opens that source's video in the player.
         if let target = UserDefaults.standard.string(forKey: "qaPlay"), let config = store.subscription {
@@ -98,9 +110,13 @@ enum QALaunch {
                 guard let first = videoID.flatMap({ id in videos.first { $0.id == id } }) ?? videos.first else { throw QASweep.Failure(message: "No videos") }
                 let video = try await QASweep.limit(60) { try await client.detail(first.id) }
                 let selectedEpisode = UserDefaults.standard.string(forKey: "qaEpisodeName")
-                guard let episode = selectedEpisode.flatMap({ name in video.episodes.first { $0.name == name } })
-                    ?? (selectedEpisode == nil ? video.episodes.first : nil) else { throw QASweep.Failure(message: "No episodes") }
-                let channel = try await QASweep.limit(60) { try await client.playback(episode) }
+                // `-qaEpisodeFlag <text>` keeps to lines whose name contains it (嘟嘟 for Baidu).
+                let line = UserDefaults.standard.string(forKey: "qaEpisodeFlag")
+                let episodes = line.map { line in video.episodes.filter { $0.flag.contains(line) } } ?? video.episodes
+                guard let episode = selectedEpisode.flatMap({ name in episodes.first { $0.name == name } ?? episodes.first { $0.name.contains(name) } })
+                    ?? (selectedEpisode == nil ? episodes.first : nil) else { throw QASweep.Failure(message: "No episodes") }
+                // Long enough for a Baidu or Aliyun line's sign-in code to be scanned (PluginSignIn).
+                let channel = try await QASweep.limit(240) { try await client.playback(episode) }
                 let start = UserDefaults.standard.object(forKey: "qaStartAt") == nil ? nil : UserDefaults.standard.double(forKey: "qaStartAt")
                 store.playing = store.catalogChannel(channel, video: video, episode: episode, client: client, resumePosition: start)
             } catch {
@@ -136,6 +152,14 @@ enum QALaunch {
                                      origin: config.origin) {
                     VideoDetailView(video: video, client: CatalogClient(site: site, origin: config.origin, jarURL: config.spiderURL))
                 }
+            case "open-detail":
+                if parts.count == 3, let site = config.sites.first(where: { $0.key == parts[1] }),
+                   let video = Video(json: ["vod_id": .string(parts[2]), "vod_name": .string("测试影片 \(parts[2])")], origin: config.origin) {
+                    RouteLink { VideoDetailView(video: video, client: CatalogClient(site: site, origin: config.origin, jarURL: config.spiderURL)) } label: {
+                        Text("Open video").font(.title2).padding(24)
+                    }
+                    .accessibilityIdentifier("qa.open-detail")
+                }
             case "channels":
                 if let index = Int(parts.dropFirst().first ?? ""), config.lives.indices.contains(index) {
                     ChannelListView(source: config.lives[index])
@@ -145,11 +169,27 @@ enum QALaunch {
             case "cache": CacheSettingsView()
             case "licenses": LicensesView()
             case "bilibili-account": BilibiliAccountView()
-            case "bilibili-live": BilibiliLiveView()
-            case "danmaku-list": QADanmakuList()
-            #if !os(macOS)
-            case "cloud-login": CloudQRLoginView(drive: parts.dropFirst().first == "uc" ? .uc : .quark) {}
+            case "douyin-account": DouyinAccountView()
+            #if !os(tvOS)
+            case "douyin-login": DouyinLoginView { _ in }
             #endif
+            #if os(iOS)
+            // The sheet a scanned Apple TV code opens, for a TV at a made-up address.
+            case "douyin-handoff":
+                if let link = DouyinHandoff.Link(URL(string: "yingxia://douyin-login?host=192.168.1.20&port=50000&key=" + String(repeating: "A", count: 43))!) {
+                    DouyinHandoffView(link: link)
+                }
+            #endif
+            case "bilibili-live": LivePlatformView(platform: .bilibili)
+            // `-qaPage live:<douyu|huya|douyin|bilibili>`, with `-qaQuery <text>` to show its search.
+            case "live":
+                if let platform = parts.dropFirst().first.flatMap(LivePlatform.init(rawValue:)) {
+                    LivePlatformView(platform: platform, initialQuery: UserDefaults.standard.string(forKey: "qaQuery") ?? "")
+                }
+            case "danmaku-list": QADanmakuList()
+            // `-qaPage cloud-login:<quark|uc|baidu|aliyun>`; `cloud-accounts` shows the accounts page.
+            case "cloud-login": CloudQRLoginView(drive: parts.dropFirst().first.flatMap(CloudDriveQRLogin.Drive.init(rawValue:)) ?? .quark) {}
+            case "cloud-accounts": CloudDriveView()
             default: EmptyView()
             }
         }
@@ -157,7 +197,7 @@ enum QALaunch {
 
     static func overrides(_ section: AppSection) -> Bool {
         guard section == self.section, let page else { return false }
-        return ["site", "detail", "channels", "runtime", "logs", "cache", "licenses", "cloud-login", "bilibili-account", "bilibili-live", "danmaku-list"].contains(page.split(separator: ":").first.map(String.init) ?? "")
+        return ["site", "detail", "open-detail", "channels", "runtime", "logs", "cache", "licenses", "cloud-login", "cloud-accounts", "bilibili-account", "douyin-account", "douyin-login", "douyin-handoff", "bilibili-live", "live", "danmaku-list"].contains(page.split(separator: ":").first.map(String.init) ?? "")
     }
 }
 

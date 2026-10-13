@@ -7,11 +7,10 @@ export default defineConfig({
   plugins: [react(), cloudflare()],
   build: {
     rollupOptions: {
-      // The intro film is its own page at /intro/, and the 1.1 film at /whats-new/.
+      // The intro film is also its own page at /intro/.
       input: {
         main: resolve(import.meta.dirname, "index.html"),
         intro: resolve(import.meta.dirname, "intro/index.html"),
-        whatsNew: resolve(import.meta.dirname, "whats-new/index.html"),
       },
     },
   },

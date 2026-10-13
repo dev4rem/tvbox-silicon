@@ -159,7 +159,7 @@ struct Transfer: Sendable {
         let ranged = response.statusCode == 206
         let length = ranged ? Self.total(response) : (response.expectedContentLength > 0 ? response.expectedContentLength : nil)
         let file = TransferPlan.RemoteFile(urls: [base], name: "media.part", length: length, ranged: ranged && length != nil)
-        return TransferPlan(kind: .file, headers: headers, files: [file], fileExtension: Self.fileExtension(base, mime: mime))
+        return TransferPlan(kind: .file, headers: headers, files: [file], fileExtension: Self.fileExtension(base, mime: mime, head: head))
     }
 
     private func prepare(_ dash: DashFiles) async throws -> TransferPlan {
@@ -417,7 +417,11 @@ struct Transfer: Sendable {
     static func total(_ response: HTTPURLResponse) -> Int64? {
         (response.value(forHTTPHeaderField: "Content-Range")?.split(separator: "/").last).flatMap { Int64($0) }
     }
-    static func fileExtension(_ url: URL, mime: String) -> String {
+    static func fileExtension(_ url: URL, mime: String, head: Data = Data()) -> String {
+        // The first bytes win over the name: cloud drives serve 4K MP4s named .mp3 from CDN addresses without one.
+        let bytes = [UInt8](head.prefix(12))
+        if bytes.count >= 12, bytes[4...7] == [0x66, 0x74, 0x79, 0x70] { return bytes[8...11] == [0x71, 0x74, 0x20, 0x20] ? "mov" : "mp4" }
+        if bytes.count >= 4, bytes[0...3] == [0x1A, 0x45, 0xDF, 0xA3] { return "mkv" }
         let known = ["mp4", "m4v", "mov", "mkv", "webm", "flv", "avi", "ts", "mp3", "m4a", "aac", "flac"]
         let named = url.pathExtension.lowercased()
         if known.contains(named) { return named }

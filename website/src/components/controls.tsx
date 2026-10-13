@@ -15,13 +15,13 @@ export function SoonPill({ small = false }: { small?: boolean }) {
 }
 
 /** The current Mac release on download.getmegaportal.com (R2 bucket megaportal-downloads). */
-export const MAC_DOWNLOAD = "https://download.getmegaportal.com/yingxia/1.2.1/Yingxia-1.2.1-macos-arm64.dmg";
+export const MAC_DOWNLOAD = "https://download.getmegaportal.com/yingxia/1.6/Yingxia-1.6-macos-arm64.dmg";
 
 /** iPhone/iPad and Apple TV IPAs for sideloading, next to the Mac release. */
 export const DOWNLOADS = {
   mac: MAC_DOWNLOAD,
-  ios: "https://download.getmegaportal.com/yingxia/1.2.1/Yingxia-1.2.1-ios.ipa",
-  tv: "https://download.getmegaportal.com/yingxia/1.2.1/Yingxia-1.2.1-tvos.ipa",
+  ios: "https://download.getmegaportal.com/yingxia/1.6/Yingxia-1.6-ios.ipa",
+  tv: "https://download.getmegaportal.com/yingxia/1.6/Yingxia-1.6-tvos.ipa",
 } as const;
 
 /** Sideloading tools, official sources only (iloader.site and plamimpactor.site are third-party mirrors). */
